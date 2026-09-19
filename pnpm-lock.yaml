@@ -32,9 +32,6 @@ importers:
       '@nestjs/platform-express':
         specifier: ^12.0.3
         version: 12.0.3(@nestjs/common@12.0.3(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@12.0.3)
-      '@scrinode/types':
-        specifier: workspace:*
-        version: link:../../packages/types
       '@scrinode/validation':
         specifier: workspace:*
         version: link:../../packages/validation
