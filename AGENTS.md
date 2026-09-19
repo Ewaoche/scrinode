@@ -418,8 +418,21 @@ Every workspace package is scoped **`@scrinode/*`**. No unscoped names, no ad-ho
 
 ## Package boundaries
 
+Enforced by ESLint. A violating import fails `pnpm verify` and fails CI.
+
+```text
+@scrinode/web         ✗ @scrinode/admin-ui, @scrinode/backoffice
+@scrinode/backoffice  ✗ @scrinode/web, @scrinode/scripture
+@scrinode/api         ✗ frontend apps and their components
+@scrinode/types       ✗ every runtime dependency
+apps/api domain code  ✗ the mongodb driver — use a repository
+everywhere but ai/    ✗ vendor AI SDKs — use AIProvider
+everywhere            ✗ relative imports across packages
+```
+
+Add a package's rules to its `eslint.config`, using `boundaries()` from `@scrinode/eslint-config/boundaries`. When adding a rule, verify it fires: write a deliberate violation, confirm lint fails, then remove it. A rule that cannot fail is not protection.
+
 - `packages/ui` holds genuinely shared primitives.
-- `@scrinode/admin-ui` must never be imported by `@scrinode/web`. Enforce with an ESLint boundary rule, not convention.
 - Reader-facing domain components (`Verse`, `Passage`, `ScriptureSelection`) stay reader-facing.
 - Admin types must not leak into public API response shapes.
 

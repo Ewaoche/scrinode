@@ -18,7 +18,15 @@ READ → SELECT → STUDY → ASK ZEDEK → VERIFY → SAVE → BUILD → PREACH
 
 ## Status
 
-**Pre-implementation.** This repository currently contains specifications only — no application code has been written yet. The design is settled enough to build against; see [Getting started](#getting-started) for what comes first.
+**Scaffold complete; no interface built yet.** The monorepo, three applications, shared packages, database layer, authentication and test infrastructure are in place and verified. There is deliberately no designed UI — the Bible reader, Verse Inspector and backoffice screens come next.
+
+```bash
+pnpm install
+pnpm verify                            # build · lint · typecheck · test
+pnpm --filter @scrinode/e2e test:e2e   # end-to-end, in-memory database
+```
+
+191 unit tests and 19 end-to-end tests across six packages.
 
 ---
 
@@ -102,7 +110,7 @@ The backoffice is internal staff tooling: source and licence registry, ingestion
 
 See [docs/PLAN_backoffice_architecture.md](docs/PLAN_backoffice_architecture.md).
 
-### Planned monorepo layout (Turborepo)
+### Monorepo layout (Turborepo)
 
 ```text
 scrinode/
@@ -114,6 +122,8 @@ scrinode/
 ```
 
 All workspace packages are scoped `@scrinode/*` — `@scrinode/web`, `@scrinode/types`, `@scrinode/scripture` and so on. Internal dependencies use `workspace:*`, and imports always use the package name rather than a relative path across boundaries.
+
+Package boundaries are enforced by ESLint rather than convention: the public reader cannot import admin code, `@scrinode/types` cannot take a runtime dependency, domain services cannot import the MongoDB driver, and vendor AI SDKs are confined to `@scrinode/ai`. A violating import fails the build.
 
 ---
 
@@ -157,12 +167,28 @@ Prepare the architecture for deferred work only where doing so is cheap and sens
 
 ## Getting started
 
-There is no application code yet. The specifications name the build order, and the first artifacts are:
+```bash
+pnpm install
+cp .env.example .env.local     # fill in MONGODB_URI and NEXTAUTH_SECRET
+pnpm verify
+```
 
-1. **Monorepo scaffold** — Turborepo, shared TypeScript and lint configs.
-2. **`packages/types` and `packages/scripture`** — `BibleReference`, canonical ID parsing and formatting, `ScriptureContext`. Reference parsing lives here once and is never duplicated.
-3. **Design token system** — resolving the palette discrepancies noted above.
-4. **Scripture + Verse Inspector** — v0.1 calls this "the nucleus that every Study, Zedek, Work and Library workflow depends upon." It precedes any AI work.
+Every environment variable the code reads is documented in [.env.example](.env.example), and a test fails if one is added without being documented there.
+
+Day-to-day:
+
+```bash
+pnpm dev                                    # all three apps
+pnpm --filter @scrinode/api migrate:status  # pending migrations
+pnpm --filter @scrinode/api migrate         # apply them
+```
+
+Migrations are a deliberate, separate step — never run on application boot. They follow expand → migrate → contract: add, backfill, switch readers, and only drop in a later deploy. Every migration is reversible.
+
+### What comes next
+
+1. **Scripture reader + Verse Inspector** — v0.1 calls this "the nucleus that every Study, Zedek, Work and Library workflow depends upon." It precedes any AI work.
+2. **Admin identity and RBAC**, then the audit log, then backoffice features — see [docs/PLAN_backoffice_architecture.md](docs/PLAN_backoffice_architecture.md).
 
 Two decisions block substantial progress and should be settled early:
 

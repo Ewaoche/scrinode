@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # Never cancel a run on main: every commit there is deploy-bound, so its
+  # result must be recorded.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  NODE_VERSION: '22'
+  PNPM_VERSION: '11.8.0'
+
+jobs:
+  verify:
+    name: Build, lint, typecheck, test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install
+        # --frozen-lockfile fails when the lockfile does not match
+        # package.json, so a dependency change cannot land unrecorded.
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify
+        # Boundary violations, type errors and failing tests all fail here.
+        run: pnpm verify
+
+  e2e:
+    name: End-to-end
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Runs only once the workspace is sound, so E2E failures are not noise
+    # from an already-broken build.
+    needs: verify
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        run: pnpm --filter @scrinode/e2e exec playwright install --with-deps chromium
+
+      - name: Build
+        run: pnpm build
+
+      - name: Run end-to-end tests
+        # Starts its own in-memory MongoDB; never reaches Atlas.
+        run: pnpm --filter @scrinode/e2e test:e2e
+
+      - name: Upload report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: apps/e2e/playwright-report/
+          retention-days: 7
