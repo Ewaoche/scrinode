@@ -1,0 +1,128 @@
+@import 'tailwindcss';
+
+/**
+ * Scrinode design tokens.
+ *
+ * Values come from docs/color-pallet.png and AGENTS.md §6. Where the image
+ * defines tokens the written specs do not (muted text, success, error,
+ * action text, the neutral scale), the image is used and noted below.
+ *
+ * Two conflicts remain unresolved and are marked TODO. They need a product
+ * decision before any UI is designed against them.
+ */
+
+/*
+ * `static` emits every token regardless of whether a utility class references
+ * it. Without it Tailwind 4 tree-shakes unused tokens, which would drop most
+ * of the palette and silently break theming once UI is built against it.
+ */
+@theme static {
+  /* ---------------------------------------------------------------------
+   * Light — warm, clean, highly readable
+   * ------------------------------------------------------------------ */
+  --color-background: #f8f7f3;
+  --color-surface: #ffffff;
+  --color-scripture-surface: #fcfaf5;
+  --color-text-primary: #1c2430;
+  --color-text-secondary: #667085;
+  --color-text-muted: #8b93a1;
+  --color-border: #e4e0d8;
+  --color-action: #22304a;
+  --color-action-text: #ffffff;
+  --color-link: #355070;
+  --color-selection: #f0e3b5;
+  --color-success: #3e7458;
+  --color-error: #b54747;
+
+  /* Semantic accents — AGENTS.md §6. Used sparingly. */
+  --color-accent-scripture: #355070;
+  --color-accent-study: #6f7d5a;
+  --color-accent-zedek: #c5a253;
+  --color-accent-work: #4c6ef5;
+  --color-accent-library: #8c7d6b;
+
+  /* Brand */
+  --color-brand-ink: #172033;
+  --color-brand-blue: #355070;
+  --color-brand-gold: #c5a253;
+  --color-brand-sage: #6f7d5a;
+
+  /* Neutral scale */
+  --color-neutral-50: #f8f7f3;
+  --color-neutral-100: #e4e0d8;
+  --color-neutral-200: #d6d1c7;
+  --color-neutral-300: #a7a3a0;
+  --color-neutral-400: #6b7280;
+  --color-neutral-500: #374151;
+  --color-neutral-600: #1f2937;
+  --color-neutral-700: #111827;
+
+  /* Scripture reading type — the primary reading surface (AGENTS.md §12). */
+  --font-scripture: Georgia, 'Times New Roman', serif;
+  --font-ui:
+    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+/**
+ * Dark — restful, refined.
+ *
+ * Applied via next-themes, which sets data-theme on <html>.
+ */
+[data-theme='dark'] {
+  --color-background: #10151f;
+  --color-surface: #171e2a;
+  --color-scripture-surface: #141a24;
+  --color-surface-elevated: #1e2735;
+  --color-text-primary: #f3f0e8;
+  --color-text-secondary: #b7bfca;
+  --color-text-muted: #8993a2;
+  --color-border: #2c3645;
+  --color-action: #d1b363;
+  --color-action-text: #161616;
+  --color-link: #91add1;
+  --color-selection: #514528;
+  --color-success: #7db692;
+  --color-error: #e07b7b;
+
+  --color-accent-scripture: #91add1;
+  --color-accent-study: #9bae83;
+  --color-accent-zedek: #d1b363;
+}
+
+/* Reading defaults. Accessibility is a product requirement, not a
+ * post-launch task (AGENTS.md §32). */
+@layer base {
+  html {
+    color-scheme: light;
+  }
+
+  [data-theme='dark'] {
+    color-scheme: dark;
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-text-primary);
+    font-family: var(--font-ui);
+  }
+
+  ::selection {
+    background-color: var(--color-selection);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-link);
+    outline-offset: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
