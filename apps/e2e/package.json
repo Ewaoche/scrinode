@@ -1,0 +1,21 @@
+{
+  "name": "@scrinode/e2e",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "test:e2e": "node run.mjs",
+    "test:e2e:ui": "node run.mjs --ui",
+    "install:browsers": "playwright install chromium",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint tests"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "@scrinode/config": "workspace:*",
+    "@scrinode/eslint-config": "workspace:*",
+    "@types/node": "^22.10.5",
+    "eslint": "^9.18.0",
+    "mongodb-memory-server": "^11.2.0",
+    "typescript": "^5.7.3"
+  }
+}

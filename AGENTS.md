@@ -1092,6 +1092,7 @@ Requirements:
 - An admin session token must never authorize a reader route.
 - A compromised reader account must not be able to escalate to admin.
 - No privilege fields on the reader `User` schema.
+- **Neither app may set a cookie scoped to a parent domain.** The reader is `scrinode.com` and the backoffice is `admin.scrinode.com`; a cookie with `Domain=.scrinode.com` would be sent to both and hand the backoffice a reader session. Session cookies stay host-only, `HttpOnly`, and never `SameSite=None`.
 
 Both directions must be covered by tests.
 
