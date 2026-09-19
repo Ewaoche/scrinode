@@ -18,6 +18,12 @@ peerDependencyRules:
     # MongoDB 7 server in apps/web/src/auth/adapter.test.ts. Revisit if the
     # adapter publishes a release declaring ^7.
     '@auth/mongodb-adapter>mongodb': '7'
+    # next-auth 4 and @auth/core declare nodemailer ^7, but every 7.x release
+    # carries unpatched advisories including SMTP command injection and CRLF
+    # header injection. 9.x patches them; the SMTP transport API used by
+    # EmailProvider is unchanged. Verified by apps/web/src/auth/nodemailer.test.ts.
+    'next-auth>nodemailer': '9'
+    '@auth/core>nodemailer': '9'
 
 minimumReleaseAgeExclude:
   - '@turbo/darwin-64@2.11.2'

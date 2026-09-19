@@ -55,7 +55,11 @@ export default defineConfig({
       cwd: '../..',
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,
-      env: { ...sharedEnv, API_PORT: String(API_PORT) },
+      env: {
+        ...sharedEnv,
+        API_PORT: String(API_PORT),
+        CORS_ORIGINS: `http://localhost:${WEB_PORT},http://localhost:${BACKOFFICE_PORT}`,
+      },
     },
     {
       command: 'pnpm --filter @scrinode/web start',

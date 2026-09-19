@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { corsOriginsSchema } from './security-env.js';
 
 /**
  * Environment validation.
@@ -35,6 +36,11 @@ export const apiEnvSchema = z.object({
   API_PORT: portSchema.default(4000),
   MONGODB_URI: mongoUriSchema,
   MONGODB_DB: databaseNameSchema,
+
+  // Origins permitted to call the API. Defaults to the local reader and
+  // backoffice so development needs no configuration; every deployed
+  // environment must set it explicitly.
+  CORS_ORIGINS: corsOriginsSchema,
 });
 
 export type ApiEnv = z.infer<typeof apiEnvSchema>;

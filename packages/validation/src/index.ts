@@ -23,3 +23,5 @@ export {
 } from './env.js';
 
 export { authSecretSchema, webAuthEnvSchema, type WebAuthEnv } from './auth-env.js';
+
+export { corsOriginsSchema, type CorsOrigins } from './security-env.js';

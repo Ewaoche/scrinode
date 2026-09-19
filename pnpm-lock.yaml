@@ -35,9 +35,15 @@ importers:
       '@nestjs/platform-express':
         specifier: ^12.0.3
         version: 12.0.3(@nestjs/common@12.0.3(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@12.0.3)
+      '@nestjs/throttler':
+        specifier: ^6.7.0
+        version: 6.7.0(@nestjs/common@12.0.3(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@12.0.3)(reflect-metadata@0.2.2)
       '@scrinode/validation':
         specifier: workspace:*
         version: link:../../packages/validation
+      helmet:
+        specifier: ^8.3.0
+        version: 8.3.0
       mongodb:
         specifier: ^7.6.0
         version: 7.6.0
@@ -189,7 +195,7 @@ importers:
     dependencies:
       '@auth/mongodb-adapter':
         specifier: ^3.11.3
-        version: 3.11.3(mongodb@7.6.0)(nodemailer@7.0.13)
+        version: 3.11.3(mongodb@7.6.0)(nodemailer@9.1.1)
       '@reduxjs/toolkit':
         specifier: ^2.12.0
         version: 2.12.0(react-redux@9.3.0(@types/react@19.3.0)(react@19.3.0)(redux@5.0.1))(react@19.3.0)
@@ -210,13 +216,13 @@ importers:
         version: 16.3.5(@babel/core@7.29.7)(@playwright/test@1.63.0)(@types/node@22.20.3)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       next-auth:
         specifier: ^4.24.15
-        version: 4.24.15(next@16.3.5(@playwright/test@1.63.0)(@types/node@22.20.3)(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(nodemailer@7.0.13)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+        version: 4.24.15(next@16.3.5(@playwright/test@1.63.0)(@types/node@22.20.3)(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(nodemailer@9.1.1)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       next-themes:
         specifier: ^0.4.6
         version: 0.4.6(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       nodemailer:
-        specifier: ^7.0.7
-        version: 7.0.13
+        specifier: ^9.1.1
+        version: 9.1.1
       react:
         specifier: ^19.3.0
         version: 19.3.0
@@ -245,6 +251,9 @@ importers:
       '@types/node':
         specifier: ^22.10.5
         version: 22.20.3
+      '@types/nodemailer':
+        specifier: ^7.0.4
+        version: 7.0.12
       '@types/react':
         specifier: ^19.0.7
         version: 19.3.0
@@ -323,12 +332,13 @@ importers:
 
   packages/eslint-config:
     dependencies:
-      '@eslint/js':
-        specifier: ^9.18.0
-        version: 9.39.5
       eslint:
         specifier: ^9.18.0
         version: 9.39.5(jiti@2.7.0)
+    devDependencies:
+      '@eslint/js':
+        specifier: ^9.18.0
+        version: 9.39.5
       eslint-plugin-boundaries:
         specifier: ^5.0.1
         version: 5.4.0(@typescript-eslint/parser@8.70.0(eslint@9.39.5(jiti@2.7.0))(typescript@5.9.3))(eslint@9.39.5(jiti@2.7.0))
@@ -1088,6 +1098,14 @@ packages:
       '@nestjs/platform-express':
         optional: true
 
+  '@nestjs/throttler@6.7.0':
+    resolution: {integrity: sha512-+trKbv/9w8e8kZNVHF8X+q2LdpbYwKa8+PcUsZ4kUIJo2TOeS7CsNPvkwd7tOFrog8sbGrBBxWyp1roZJYbF6w==}
+    engines: {node: ^20.19.0 || ^22.12.0 || >=24.0.0}
+    peerDependencies:
+      '@nestjs/common': ^7.0.0 || ^8.0.0 || ^9.0.0 || ^10.0.0 || ^11.0.0 || ^12.0.0
+      '@nestjs/core': ^7.0.0 || ^8.0.0 || ^9.0.0 || ^10.0.0 || ^11.0.0 || ^12.0.0
+      reflect-metadata: ^0.1.13 || ^0.2.0
+
   '@next/env@16.3.5':
     resolution: {integrity: sha512-NWEXVDMqoEo0ktmU6u0sE2Vg0LOcsD7NnOTJNo3/fEaTfsg+F1bMIxuDmQbda4e3yTIQwVdUREF2yIuMOusKtg==}
 
@@ -1588,6 +1606,9 @@ packages:
 
   '@types/node@22.20.3':
     resolution: {integrity: sha512-DZmzkmwHzXrLPAXPyKNDzlIwMMUZCVacoD25ywdy5YTKGbOx/2ld+Q38Im2zJ0vBuZP5Prd3VZutKZyXwkOS8A==}
+
+  '@types/nodemailer@7.0.12':
+    resolution: {integrity: sha512-80vKwiIsVSyFA1rRovH59jNPLBOuc6dRZIHEu40gXTkBkZnQv8vog1xSGEb9j5q/tdMAs5ivvDR2pLTU0hGHXA==}
 
   '@types/qs@6.15.1':
     resolution: {integrity: sha512-GZHUBZR9hckSUhrxmp1nG6NwdpM9fCunJwyThLW1X3AyHgd9IlHb6VANpQQqDr2o/qQp6McZ3y/IA2rVzKzSbw==}
@@ -2386,6 +2407,10 @@ packages:
     resolution: {integrity: sha512-T2UbfbBEF32wiepXIsMlTW9+dDYC6wMh/t/vYA4tuOMKqWz/n3vr1NFSxQiyP+zk2mXsoMA/i/7qV6LKut1t1A==}
     engines: {node: '>= 0.4'}
 
+  helmet@8.3.0:
+    resolution: {integrity: sha512-Qgpiaws3Sm30Av8Eah6sjMCZZwjlBu+E68rhpCWBshY1lb09HtLwj5GviX0OyQIn+ulUS0iX0AxN5n3tLZzz1w==}
+    engines: {node: '>=18.0.0'}
+
   html-encoding-sniffer@6.0.0:
     resolution: {integrity: sha512-CV9TW3Y3f8/wT0BRFc1/KAVQ3TUHiXmaAb6VW9vtiMFf7SLoMd1PdAc4W3KFOFETBJUb90KatHqlsZMWV+R9Gg==}
     engines: {node: ^20.19.0 || ^22.12.0 || >=24.0.0}
@@ -2920,8 +2945,8 @@ packages:
     resolution: {integrity: sha512-x0InOIyzgdk+eyaWaRJFH5snEtiImgBgblZ2CyPrLmqqcuMQkEvcDPHbzqbD8eDsSeJbVOjn+crzyzHaM4D+/A==}
     engines: {node: '>=18'}
 
-  nodemailer@7.0.13:
-    resolution: {integrity: sha512-PNDFSJdP+KFgdsG3ZzMXCgquO7I6McjY2vlqILjtJd0hy8wEvtugS9xKRF2NWlPNGxvLCXlTNIae4serI7dinw==}
+  nodemailer@9.1.1:
+    resolution: {integrity: sha512-izw9mVKFix6YSnC9eLgV6g1opl9DUlRio9ZNcq+Wu9Ujn2UwF+8Nl0B8nz22kEC+CTZCvinkxwJ0DeFbb6NwcQ==}
     engines: {node: '>=6.0.0'}
 
   oauth4webapi@3.8.8:
@@ -3734,7 +3759,7 @@ snapshots:
       is-potential-custom-element-name: 1.0.1
       lru-cache: 11.5.2
 
-  '@auth/core@0.41.3(nodemailer@7.0.13)':
+  '@auth/core@0.41.3(nodemailer@9.1.1)':
     dependencies:
       '@panva/hkdf': 1.2.1
       jose: 6.2.12
@@ -3742,11 +3767,11 @@ snapshots:
       preact: 10.24.3
       preact-render-to-string: 6.5.11(preact@10.24.3)
     optionalDependencies:
-      nodemailer: 7.0.13
+      nodemailer: 9.1.1
 
-  '@auth/mongodb-adapter@3.11.3(mongodb@7.6.0)(nodemailer@7.0.13)':
+  '@auth/mongodb-adapter@3.11.3(mongodb@7.6.0)(nodemailer@9.1.1)':
     dependencies:
-      '@auth/core': 0.41.3(nodemailer@7.0.13)
+      '@auth/core': 0.41.3(nodemailer@9.1.1)
       mongodb: 7.6.0
     transitivePeerDependencies:
       - '@simplewebauthn/browser'
@@ -4341,6 +4366,12 @@ snapshots:
     optionalDependencies:
       '@nestjs/platform-express': 12.0.3(@nestjs/common@12.0.3(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@12.0.3)
 
+  '@nestjs/throttler@6.7.0(@nestjs/common@12.0.3(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@12.0.3)(reflect-metadata@0.2.2)':
+    dependencies:
+      '@nestjs/common': 12.0.3(reflect-metadata@0.2.2)(rxjs@7.8.2)
+      '@nestjs/core': 12.0.3(@nestjs/common@12.0.3(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/platform-express@12.0.3)(reflect-metadata@0.2.2)(rxjs@7.8.2)
+      reflect-metadata: 0.2.2
+
   '@next/env@16.3.5': {}
 
   '@next/swc-darwin-arm64@16.3.5':
@@ -4710,6 +4741,10 @@ snapshots:
   '@types/node@22.20.3':
     dependencies:
       undici-types: 6.21.0
+
+  '@types/nodemailer@7.0.12':
+    dependencies:
+      '@types/node': 22.20.3
 
   '@types/qs@6.15.1': {}
 
@@ -5519,6 +5554,8 @@ snapshots:
     dependencies:
       function-bind: 1.1.2
 
+  helmet@8.3.0: {}
+
   html-encoding-sniffer@6.0.0(@noble/hashes@1.8.0):
     dependencies:
       '@exodus/bytes': 1.15.1(@noble/hashes@1.8.0)
@@ -5926,7 +5963,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  next-auth@4.24.15(next@16.3.5(@playwright/test@1.63.0)(@types/node@22.20.3)(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(nodemailer@7.0.13)(react-dom@19.3.0(react@19.3.0))(react@19.3.0):
+  next-auth@4.24.15(next@16.3.5(@playwright/test@1.63.0)(@types/node@22.20.3)(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(nodemailer@9.1.1)(react-dom@19.3.0(react@19.3.0))(react@19.3.0):
     dependencies:
       '@babel/runtime': 7.29.7
       '@panva/hkdf': 1.2.1
@@ -5941,7 +5978,7 @@ snapshots:
       react-dom: 19.3.0(react@19.3.0)
       uuid: 11.1.1
     optionalDependencies:
-      nodemailer: 7.0.13
+      nodemailer: 9.1.1
 
   next-themes@0.4.6(react-dom@19.3.0(react@19.3.0))(react@19.3.0):
     dependencies:
@@ -5983,7 +6020,7 @@ snapshots:
 
   node-releases@2.0.56: {}
 
-  nodemailer@7.0.13: {}
+  nodemailer@9.1.1: {}
 
   oauth4webapi@3.8.8: {}
 

@@ -1285,6 +1285,27 @@ Minimum requirements:
 - Audit logging for sensitive changes.
 - Provider key rotation capability.
 
+## Implemented baseline
+
+Verified by tests in `apps/e2e/tests/security.spec.ts`; changing any of it fails CI.
+
+```text
+API           helmet, explicit CORS allow-list (wildcard rejected by schema),
+              rate limiting (10/s, 120/min) with health exempt, 1 MB body cap,
+              no x-powered-by
+Reader        nonce-based CSP via middleware (no unsafe-inline for scripts),
+              DENY framing, nosniff, strict-origin-when-cross-origin, HSTS,
+              Permissions-Policy
+Backoffice    stricter CSP, noindex, DENY framing, no-referrer, HSTS
+```
+
+Rules:
+
+- **Never widen a CSP to `'unsafe-inline'` for scripts.** Use a nonce. The reader renders Scripture, user notes and AI output, none of which may execute.
+- **Never set a wildcard CORS origin.** The API serves credentialed requests; the schema rejects `*` and any origin carrying a path.
+- Health endpoints stay exempt from rate limiting: a throttled probe reads as an outage.
+- Keep `pnpm audit --prod` clean. Dev-only advisories are acceptable; a vulnerable runtime dependency is not.
+
 ## Admin security
 
 The backoffice has write access to everything. It gets the strictest treatment in the product.

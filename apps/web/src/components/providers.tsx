@@ -11,7 +11,7 @@ import { makeStore, type AppStore } from '../store';
  * The store is created once per client via a ref rather than at module scope,
  * so server rendering cannot share one store between requests.
  */
-export function Providers({ children }: { children: ReactNode }) {
+export function Providers({ children, nonce }: { children: ReactNode; nonce?: string }) {
   const storeRef = useRef<AppStore>(undefined);
 
   storeRef.current ??= makeStore();
@@ -23,6 +23,7 @@ export function Providers({ children }: { children: ReactNode }) {
         defaultTheme="system"
         enableSystem
         disableTransitionOnChange
+        {...(nonce ? { nonce } : {})}
       >
         {children}
       </ThemeProvider>

@@ -1,4 +1,5 @@
 import { Controller, Get, HttpStatus, Res } from '@nestjs/common';
+import { SkipThrottle } from '@nestjs/throttler';
 import type { Response } from 'express';
 import { HealthService, type HealthReport } from './health.service';
 
@@ -13,6 +14,12 @@ import { HealthService, type HealthReport } from './health.service';
  * dependencies. It returns 503 when degraded so a load balancer removes the
  * instance from rotation rather than sending it requests it cannot serve.
  */
+// Platform probes poll frequently and must never be throttled: a rate-limited
+// health check reads as an outage and triggers needless restarts.
+//
+// Each named throttler must be listed explicitly; SkipThrottle() with no
+// argument does not skip named limiters.
+@SkipThrottle({ short: true, sustained: true })
 @Controller('health')
 export class HealthController {
   constructor(private readonly health: HealthService) {}
