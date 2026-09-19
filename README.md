@@ -87,15 +87,27 @@ AI             Provider abstraction layer (capability roles, not vendor names)
 Streaming      Server-Sent Events
 Email / SMS    Resend · Termii
 Cron           Vercel Cron
-Deployment     Vercel
+Deployment     Vercel — separate projects for web and backoffice
 ```
 
-Planned monorepo layout (Turborepo):
+### Three applications
+
+```text
+apps/api          NestJS    shared by both frontends
+apps/web          Next.js   public reader — scrinode.com
+apps/backoffice   Next.js   internal admin — admin.scrinode.com
+```
+
+The backoffice is internal staff tooling: source and licence registry, ingestion runs, content moderation, user administration, Zedek operations and feature flags. It is **not** a sixth product domain and never appears in product navigation. Admin identity is a separate system from reader identity — not a role on a reader account — so a compromised reader account cannot escalate.
+
+See [docs/PLAN_backoffice_architecture.md](docs/PLAN_backoffice_architecture.md).
+
+### Planned monorepo layout (Turborepo)
 
 ```text
 scrinode/
-├── apps/          web (Next.js) · api (NestJS)
-├── packages/      ui · scripture · types · validation · ai · config · eslint-config
+├── apps/          web (Next.js) · backoffice (Next.js) · api (NestJS)
+├── packages/      ui · admin-ui · scripture · types · validation · ai · config · eslint-config
 ├── data/          imports · fixtures · schemas
 ├── tooling/
 └── docs/
@@ -105,14 +117,17 @@ scrinode/
 
 ## Documentation
 
+**[AGENTS.md](AGENTS.md) is the single source of truth.** It supersedes every document below. Where any of them conflicts with AGENTS.md, AGENTS.md is correct and the other document is stale. `docs/` holds *parts* — specifications, plans and references covering portions of the product, added to over time.
+
 | Document | What it covers |
 |---|---|
-| [AGENTS.md](AGENTS.md) | **Read first when contributing.** Operational rules, prime directives, domain coding rules, change protocol, and the feature completion checklist |
+| [AGENTS.md](AGENTS.md) | **Authoritative. Read first when contributing.** Operational rules, prime directives, domain coding rules, change protocol, and the feature completion checklist |
+| [docs/PLAN_backoffice_architecture.md](docs/PLAN_backoffice_architecture.md) | Admin backoffice: architecture, RBAC model, production safety, staged implementation |
 | [docs/SCRINODE_Design_Specification_v1.0.md](docs/SCRINODE_Design_Specification_v1.0.md) | Current product + technical reference: IA, reader, data model, RAG, streaming, stack |
 | [docs/Scrinode_Product_Design_Specification_v0.1.md](docs/Scrinode_Product_Design_Specification_v0.1.md) | Product/UX depth: design principles, trust model, Context Engine, user flows, MVP priority table, acceptance criteria, locked decisions |
 | [docs/color-pallet.png](docs/color-pallet.png) | Visual palette — light/dark tokens, feature accents, brand colors, neutral scale |
 
-v1.0 supersedes v0.1 as the technical reference. v0.1 remains authoritative for material v1.0 does not repeat: the P0–P2 priority table, MVP acceptance criteria, user flows, and the record of locked decisions.
+Between the two specifications, v1.0 is the later technical reference; v0.1 remains the best source for material v1.0 does not repeat — the P0–P2 priority table, MVP acceptance criteria, user flows, and the record of locked decisions. Both predate the admin backoffice and are superseded by AGENTS.md wherever they differ.
 
 ---
 

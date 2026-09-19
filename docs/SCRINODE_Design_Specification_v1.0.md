@@ -6,6 +6,10 @@
 **Platform:** Mobile-first responsive web application  
 **Domain:** `scrinode.com`
 
+> **Authority:** AGENTS.md supersedes this document. Where the two conflict, follow AGENTS.md.
+>
+> **Superseded sections:** §14 (Repository Architecture) and §32 (Security) predate the admin backoffice. Scrinode now has three applications, and two separate identity systems. See AGENTS.md §8, §27, §33 and §51, and `docs/PLAN_backoffice_architecture.md`.
+
 ---
 
 ## 1. Product Overview
@@ -653,6 +657,8 @@ AI-generated translation must never be presented as if it were an official Bible
 ---
 
 ## 14. Repository Architecture
+
+> **Superseded.** Scrinode now has three applications: `apps/web`, `apps/backoffice` and `apps/api`. See AGENTS.md §8.
 
 Recommended monorepo:
 
@@ -1335,6 +1341,8 @@ Requirements:
 ---
 
 ## 32. Security
+
+> **Extended.** Admin identity is a separate system from reader identity, with its own collections, sessions and RBAC. Admin security rules are in AGENTS.md §27 and §33.
 
 Minimum security requirements:
 

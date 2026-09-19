@@ -5,6 +5,10 @@ Specification
 
 **Mobile-first AI Bible research, study and ministry workspace**
 
+> **Authority:** AGENTS.md supersedes this document. Where the two conflict, follow AGENTS.md.
+>
+> This is the earliest specification. It remains useful for material later documents do not repeat: design principles, the trust model, the Context Engine, user flows, the P0–P2 priority table, MVP acceptance criteria and the record of locked decisions. Architecture described here predates the admin backoffice.
+
 <table>
 <colgroup>
 <col style="width: 100%" />

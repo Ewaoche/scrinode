@@ -5,8 +5,27 @@
 > **Primary Domain:** `scrinode.com`  
 > **Repository:** `https://github.com/Ewaoche/scrinode.git`  
 > **Document Role:** Operational guidance for AI coding agents, autonomous contributors, and human collaborators  
+> **Authority:** **This document supersedes all others.** Where any document in `./docs` conflicts with AGENTS.md, AGENTS.md wins.  
 > **Status:** MVP-first, future-ready  
 > **Guiding Principle:** **Scripture first. Research around Scripture. AI in service of Scripture.**
+
+---
+
+# 0. Document Authority
+
+**AGENTS.md is the single source of truth for Scrinode.**
+
+The `./docs` directory holds **parts** — specifications, plans and references covering portions of the product. More will be added over time. They are supporting material, not competing authorities.
+
+Rules:
+
+- Where a document in `./docs` conflicts with AGENTS.md, **AGENTS.md is correct** and the doc is stale.
+- After an architectural change, update AGENTS.md first. Do not attempt to synchronise every document in `./docs`.
+- A `./docs` file may be superseded in part without being rewritten. Note it and move on.
+- New specifications, plans and design documents go in `./docs`.
+- README.md is kept aligned with AGENTS.md, as the entry point for collaborators.
+
+If you are an agent reading only one document before making changes, read this one.
 
 ---
 
