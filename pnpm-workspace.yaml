@@ -1,6 +1,11 @@
 packages:
   - "apps/*"
   - "packages/*"
+# Native build scripts are blocked by default as a supply-chain guard. Each
+# entry below is a deliberate decision to allow one.
+allowBuilds:
+  # Compiler used by the NestJS CLI to build @scrinode/api.
+  '@swc/core': true
 minimumReleaseAgeExclude:
   - '@turbo/darwin-64@2.11.2'
   - '@turbo/darwin-arm64@2.11.2'
