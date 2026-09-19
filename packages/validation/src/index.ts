@@ -21,3 +21,5 @@ export {
   validateEnv,
   type ApiEnv,
 } from './env.js';
+
+export { authSecretSchema, webAuthEnvSchema, type WebAuthEnv } from './auth-env.js';

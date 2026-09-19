@@ -9,6 +9,16 @@ allowBuilds:
   # Downloads a MongoDB binary so tests run against a real server without
   # touching Atlas. Test-only; never a runtime dependency.
   mongodb-memory-server: true
+# Peer ranges we have deliberately overruled. Each must be justified, so a
+# genuine incompatibility is never lost among accepted warnings.
+peerDependencyRules:
+  allowedVersions:
+    # @auth/mongodb-adapter declares mongodb ^6; the workspace runs ^7. The
+    # adapter uses only stable collection operations, verified against a real
+    # MongoDB 7 server in apps/web/src/auth/adapter.test.ts. Revisit if the
+    # adapter publishes a release declaring ^7.
+    '@auth/mongodb-adapter>mongodb': '7'
+
 minimumReleaseAgeExclude:
   - '@turbo/darwin-64@2.11.2'
   - '@turbo/darwin-arm64@2.11.2'
