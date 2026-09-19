@@ -399,10 +399,27 @@ Recommended orchestration:
 - Shared domain types.
 - Shared validation.
 
+## Package naming
+
+Every workspace package is scoped **`@scrinode/*`**. No unscoped names, no ad-hoc prefixes.
+
+```text
+@scrinode/web              @scrinode/types         @scrinode/ui
+@scrinode/backoffice       @scrinode/validation    @scrinode/admin-ui
+@scrinode/api              @scrinode/scripture     @scrinode/ai
+                           @scrinode/config        @scrinode/eslint-config
+```
+
+- The directory name matches the package name after the scope.
+- Apps are scoped too, though private and never published.
+- Every package sets `"private": true` unless publishing is a deliberate decision.
+- Internal dependencies use `workspace:*`, never a version range.
+- Import by package name (`@scrinode/scripture`), never a relative path across a package boundary.
+
 ## Package boundaries
 
 - `packages/ui` holds genuinely shared primitives.
-- `packages/admin-ui` must never be imported by `apps/web`. Enforce with an ESLint boundary rule, not convention.
+- `@scrinode/admin-ui` must never be imported by `@scrinode/web`. Enforce with an ESLint boundary rule, not convention.
 - Reader-facing domain components (`Verse`, `Passage`, `ScriptureSelection`) stay reader-facing.
 - Admin types must not leak into public API response shapes.
 

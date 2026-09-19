@@ -113,6 +113,8 @@ scrinode/
 └── docs/
 ```
 
+All workspace packages are scoped `@scrinode/*` — `@scrinode/web`, `@scrinode/types`, `@scrinode/scripture` and so on. Internal dependencies use `workspace:*`, and imports always use the package name rather than a relative path across boundaries.
+
 ---
 
 ## Documentation
