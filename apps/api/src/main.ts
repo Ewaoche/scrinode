@@ -19,4 +19,8 @@ async function bootstrap(): Promise<void> {
   Logger.log(`API listening on port ${env.API_PORT}`, 'Bootstrap');
 }
 
-void bootstrap();
+void bootstrap().catch((error: unknown) => {
+  const logger = new Logger('Bootstrap');
+  logger.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+});
