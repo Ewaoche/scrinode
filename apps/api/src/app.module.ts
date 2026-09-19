@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { loadEnv } from './config/env.config';
+import { DatabaseModule } from './database/database.module';
 import { HealthModule } from './health/health.module';
 
 /**
@@ -18,6 +19,7 @@ import { HealthModule } from './health/health.module';
       // Fails the boot on a misconfigured environment.
       validate: (config) => loadEnv(config as NodeJS.ProcessEnv),
     }),
+    DatabaseModule,
     HealthModule,
   ],
 })

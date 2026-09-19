@@ -6,6 +6,9 @@ packages:
 allowBuilds:
   # Compiler used by the NestJS CLI to build @scrinode/api.
   '@swc/core': true
+  # Downloads a MongoDB binary so tests run against a real server without
+  # touching Atlas. Test-only; never a runtime dependency.
+  mongodb-memory-server: true
 minimumReleaseAgeExclude:
   - '@turbo/darwin-64@2.11.2'
   - '@turbo/darwin-arm64@2.11.2'

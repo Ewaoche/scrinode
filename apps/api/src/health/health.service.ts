@@ -1,4 +1,5 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
+import { DatabaseHealthIndicator } from '../database/database.health';
 
 export interface HealthReport {
   readonly status: 'ok' | 'degraded';
@@ -9,6 +10,11 @@ export interface HealthReport {
 @Injectable()
 export class HealthService {
   private readonly startedAt = Date.now();
+
+  constructor(
+    // Optional so the health module can be tested without a database.
+    @Optional() private readonly database?: DatabaseHealthIndicator,
+  ) {}
 
   /** Process liveness. Deliberately free of dependency checks. */
   liveness(): HealthReport {
@@ -21,11 +27,15 @@ export class HealthService {
   /**
    * Readiness to serve traffic.
    *
-   * Dependency checks are registered here as they arrive — the database in
-   * step 5, then any downstream the API cannot serve without.
+   * Unlike liveness, this does check dependencies: a process that cannot
+   * reach MongoDB should be taken out of rotation rather than restarted.
    */
-  readiness(): HealthReport {
+  async readiness(): Promise<HealthReport> {
     const checks: Record<string, 'ok' | 'failing'> = {};
+
+    if (this.database) {
+      checks.database = (await this.database.isHealthy()) ? 'ok' : 'failing';
+    }
 
     const failing = Object.values(checks).some((state) => state === 'failing');
 
