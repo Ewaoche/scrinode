@@ -1,0 +1,14 @@
+# Normalise line endings across platforms. Scrinode is worked on by multiple
+# agents and contributors; without this, checkouts differ and produce noise.
+* text=auto eol=lf
+
+# Binary — never normalise.
+*.png binary
+*.jpg binary
+*.pdf binary
+*.woff binary
+*.woff2 binary
+*.ico binary
+
+# Generated — collapse in diffs and reviews.
+pnpm-lock.yaml linguist-generated=true -diff

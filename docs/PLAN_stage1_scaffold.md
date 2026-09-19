@@ -54,7 +54,9 @@ Playwright      1.63.0
 
 **TypeScript:** npm's `latest` is 7.0.2. Pin to TypeScript 5.x for Stage 1 — NestJS 12 and the Next.js 16 toolchain have the broadest ecosystem support there, and a compiler major is not a risk worth absorbing in a scaffold. Revisit once the ecosystem settles.
 
-**Auth.js:** use `next-auth@5.0.0-beta.32` with `@auth/mongodb-adapter`. v5 is the current line and the one Next.js 16 App Router targets; v4.24.15 is stable but legacy. This is a beta dependency in a production-first app — flagged as a risk in §7.
+**Auth.js:** **`next-auth@4.24.15` (stable)** with `@auth/mongodb-adapter`. Decided over v5 beta — a beta auth dependency is not acceptable in a production-first app. v5 is the newer line and targets the App Router more directly, so the auth wiring is isolated behind a single module to keep a future v5 migration contained.
+
+**Providers:** Email and Google for Stage 1. Apple deferred.
 
 ### 2.3 Package manager
 
@@ -206,7 +208,7 @@ Per AGENTS.md §41 and the standing instruction that tests must pass: real asser
 
 | Risk | Mitigation |
 |---|---|
-| `next-auth@5` is beta in a production-first app | Isolate behind an auth module; v4 fallback is contained. Flagged for approval |
+| `next-auth@4` is the legacy line; v5 is where Auth.js is heading | Deliberate — stable beats current for auth. Isolated behind one module so a v5 migration stays contained |
 | TypeScript 7 is out; pinning to 5.x | Deliberate. Revisit when NestJS and Next.js ecosystems catch up |
 | Hand-rolled migrations lack Prisma's guardrails | Runner is tested; expand→migrate→contract enforced by review |
 | Tailwind 4 config differs substantially from v3 | Shared preset in `packages/config` so all three apps stay consistent |
@@ -214,12 +216,19 @@ Per AGENTS.md §41 and the standing instruction that tests must pass: real asser
 
 ---
 
-## 8. Open questions
+## 8. Resolved decisions
 
-1. **MongoDB Atlas cluster** — does one exist, and is there a non-production database for development? Stage 1 needs only a connection string; step 5's tests use in-memory Mongo.
-2. **`next-auth@5` beta** — acceptable, or pin to v4.24.15 stable?
-3. **Auth providers for Stage 1** — wire email only, or Google/Apple too? Email alone is enough to prove the wiring.
-4. **CI** — GitHub Actions assumed. Confirm, and whether a pre-commit hook should run tests locally given every commit is deploy-bound.
+| Question | Decision |
+|---|---|
+| MongoDB Atlas cluster | Exists. Connection string via env; never committed. Tests use in-memory Mongo and never touch it |
+| Auth.js version | **`next-auth@4.24.15` stable.** v5 beta rejected |
+| Auth providers | **Email and Google.** Apple deferred |
+| CI | **Required.** GitHub Actions running lint, build and test on every push |
+
+Still open, not blocking Stage 1:
+
+- Pre-commit hook running tests locally. Every commit is deploy-bound, so a hook would enforce mechanically what CI catches after the fact — but it slows every commit and other agents would need it configured. Deferred.
+- Development database name on the existing cluster.
 
 ---
 

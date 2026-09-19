@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.next/
+.turbo/
+coverage/
+pnpm-lock.yaml
+*.pdf
+*.png
+docs/Scrinode_Product_Design_Specification_v0.1.md
