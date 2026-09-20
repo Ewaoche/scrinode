@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fromBuffer } from 'yauzl';
+import { getAnyBook } from '@scrinode/scripture';
 import {
   BIBLE_SOURCES,
   archiveUrl,
@@ -21,6 +22,14 @@ import {
 } from './pipeline.js';
 import { latestPointerPath, releasePaths, type Manifest } from './layout.js';
 import { COLLECTIONS, VERSE_INDEXES, type VerseDocument } from './documents.js';
+import {
+  LEDGER_COLLECTION,
+  isUpToDate,
+  reasonToRun,
+  runId,
+  type IngestRun,
+  type IngestStage,
+} from './ledger.js';
 
 /**
  * Bible ingestion CLI.
@@ -101,6 +110,72 @@ function selectSources(argv: readonly string[]): readonly BibleSource[] {
 async function write(path: string, data: string | Buffer): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, data);
+}
+
+/**
+ * Open a ledger connection.
+ *
+ * The ledger lives in MongoDB even for the upload stage, so both scripts
+ * answer "what changed?" from one place that survives a rebuilt machine and
+ * is visible to every operator.
+ */
+async function openLedger(): Promise<{
+  read: (translation: string, release: string, stage: IngestStage) => Promise<IngestRun | null>;
+  begin: (manifest: Manifest, stage: IngestStage) => Promise<void>;
+  finish: (manifest: Manifest, stage: IngestStage, counts: Partial<IngestRun>) => Promise<void>;
+  markFailed: (manifest: Manifest, stage: IngestStage, error: string) => Promise<void>;
+  close: () => Promise<void>;
+}> {
+  const uri = process.env.MONGODB_URI;
+  if (!uri) fail('Tracking needs MONGODB_URI in the environment.');
+
+  const { MongoClient } = await import('mongodb');
+  const client = new MongoClient(uri);
+  await client.connect();
+
+  const collection = client
+    .db(process.env.MONGODB_DB ?? 'scrinode')
+    .collection<IngestRun>(LEDGER_COLLECTION);
+
+  const host = process.env.COMPUTERNAME ?? process.env.HOSTNAME ?? 'unknown';
+
+  return {
+    read: (translation, release, stage) =>
+      collection.findOne({ _id: runId(translation, release, stage) }),
+
+    begin: async (manifest, stage) => {
+      const id = runId(manifest.translation, manifest.release, stage);
+      await collection.replaceOne(
+        { _id: id },
+        {
+          translation: manifest.translation,
+          release: manifest.release,
+          stage,
+          archiveSha256: manifest.archiveSha256,
+          status: 'running',
+          startedAt: new Date(),
+          host,
+        },
+        { upsert: true },
+      );
+    },
+
+    finish: async (manifest, stage, counts) => {
+      await collection.updateOne(
+        { _id: runId(manifest.translation, manifest.release, stage) },
+        { $set: { status: 'completed', completedAt: new Date(), ...counts } },
+      );
+    },
+
+    markFailed: async (manifest, stage, error) => {
+      await collection.updateOne(
+        { _id: runId(manifest.translation, manifest.release, stage) },
+        { $set: { status: 'failed', completedAt: new Date(), error } },
+      );
+    },
+
+    close: () => client.close(),
+  };
 }
 
 // --- stages ---------------------------------------------------------------
@@ -220,7 +295,7 @@ async function parseStage(sources: readonly BibleSource[]): Promise<void> {
   if (failures > 0) fail(`\n${failures} translation(s) failed validation. Nothing was loaded.`);
 }
 
-async function uploadStage(sources: readonly BibleSource[]): Promise<void> {
+async function uploadStage(sources: readonly BibleSource[], force: boolean): Promise<void> {
   const endpoint = process.env.DO_SPACES_ENDPOINT;
   const bucket = process.env.DO_SPACES_BUCKET;
   const key = process.env.DO_SPACES_KEY;
@@ -255,53 +330,106 @@ async function uploadStage(sources: readonly BibleSource[]): Promise<void> {
     );
   };
 
+  const ledger = await openLedger();
   log(`Uploading ${sources.length} release(s) to ${bucket}`);
 
-  for (const source of sources) {
-    const paths = releasePaths(source.code, source.release);
-    const manifestPath = join(STAGING, paths.manifest);
+  let pushed = 0;
+  let skipped = 0;
 
-    if (!existsSync(manifestPath)) {
-      log(`  ${source.code.padEnd(10)} SKIP (not parsed)`);
-      continue;
+  try {
+    for (const source of sources) {
+      const paths = releasePaths(source.code, source.release);
+      const manifestPath = join(STAGING, paths.manifest);
+
+      if (!existsSync(manifestPath)) {
+        log(`  ${source.code.padEnd(10)} SKIP (not parsed)`);
+        continue;
+      }
+
+      const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as Manifest;
+      const previous = await ledger.read(manifest.translation, manifest.release, 'upload');
+
+      if (!force && isUpToDate(previous, manifest)) {
+        log(`  ${source.code.padEnd(10)} up to date (${previous?.objectCount ?? 0} objects)`);
+        skipped += 1;
+        continue;
+      }
+
+      await ledger.begin(manifest, 'upload');
+      let count = 0;
+
+      try {
+        await put(paths.archive, await readFile(join(STAGING, paths.archive)), 'application/zip');
+        await put(paths.manifest, Buffer.from(JSON.stringify(manifest)), 'application/json');
+        await put(paths.index, await readFile(join(STAGING, paths.index)), 'application/json');
+        count += 3;
+
+        for (const book of manifest.books) {
+          await put(
+            paths.usfm(book.bookId),
+            await readFile(join(STAGING, paths.usfm(book.bookId))),
+            'text/plain',
+          );
+          await put(
+            paths.json(book.bookId),
+            await readFile(join(STAGING, paths.json(book.bookId))),
+            'application/json',
+          );
+          count += 2;
+        }
+
+        // Written last: until it moves, the previous release is still the
+        // current one, so an interrupted upload never leaves the pointer
+        // aimed at a half-written release.
+        await put(
+          latestPointerPath(source.code),
+          Buffer.from(
+            JSON.stringify({
+              translation: manifest.translation,
+              release: manifest.release,
+              updatedAt: new Date().toISOString(),
+            }),
+          ),
+          'application/json',
+        );
+        count += 1;
+
+        await ledger.finish(manifest, 'upload', {
+          objectCount: count,
+          bookCount: manifest.totals.books,
+        });
+
+        pushed += 1;
+        log(`  ${source.code.padEnd(10)} ${count} objects  (${reasonToRun(previous, manifest)})`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await ledger.markFailed(manifest, 'upload', message);
+        log(`  ${source.code.padEnd(10)} FAILED  ${message}`);
+        throw error;
+      }
     }
 
-    const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as Manifest;
-    let count = 0;
-
-    await put(paths.archive, await readFile(join(STAGING, paths.archive)), 'application/zip');
-    await put(paths.manifest, Buffer.from(JSON.stringify(manifest)), 'application/json');
-    await put(paths.index, await readFile(join(STAGING, paths.index)), 'application/json');
-    count += 3;
-
-    for (const book of manifest.books) {
-      await put(paths.usfm(book.bookId), await readFile(join(STAGING, paths.usfm(book.bookId))), 'text/plain');
-      await put(paths.json(book.bookId), await readFile(join(STAGING, paths.json(book.bookId))), 'application/json');
-      count += 2;
-    }
-
-    await put(
-      latestPointerPath(source.code),
-      Buffer.from(
-        JSON.stringify({
-          translation: manifest.translation,
-          release: manifest.release,
-          updatedAt: new Date().toISOString(),
-        }),
-      ),
-      'application/json',
-    );
-
-    log(`  ${source.code.padEnd(10)} ${count + 1} objects`);
+    log(`
+${pushed} uploaded, ${skipped} already current.`);
+  } finally {
+    await ledger.close();
   }
 }
 
-async function loadStage(sources: readonly BibleSource[], registeredOnly: boolean): Promise<void> {
+async function loadStage(
+  sources: readonly BibleSource[],
+  registeredOnly: boolean,
+  force: boolean,
+): Promise<void> {
   const uri = process.env.MONGODB_URI;
   if (!uri) fail('Load needs MONGODB_URI in the environment.');
 
   const { MongoClient } = await import('mongodb');
   const client = new MongoClient(uri);
+  const ledger = await openLedger();
+
+  let loaded = 0;
+  let skipped = 0;
 
   try {
     await client.connect();
@@ -325,66 +453,171 @@ async function loadStage(sources: readonly BibleSource[], registeredOnly: boolea
       }
 
       const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as Manifest;
-      let written = 0;
+      const previous = await ledger.read(manifest.translation, manifest.release, 'load');
 
-      // One book at a time: a whole Bible of verse documents is large enough
-      // that a single bulk write risks memory and a long lock.
-      for (const book of manifest.books) {
-        const parsed = JSON.parse(
-          await readFile(join(STAGING, paths.json(book.bookId)), 'utf8'),
-        ) as { bookId: string; verses: { chapter: number; verse: number; verseEnd: number; text: string }[] };
-
-        const documents = toVerseDocuments(source.code, source.release, [
-          {
-            book: { bookId: parsed.bookId, verses: parsed.verses },
-            canon: book.canon,
-            name: book.name,
-            order: 0,
-            chapters: book.chapters,
-            sha256: book.sha256,
-          },
-        ]);
-
-        if (documents.length === 0) continue;
-
-        // Upserts keyed on the deterministic _id, so a re-run repairs rather
-        // than duplicates and a partial failure is safe to resume.
-        await verses.bulkWrite(
-          documents.map((doc) => ({
-            replaceOne: { filter: { _id: doc._id }, replacement: doc, upsert: true },
-          })),
-          { ordered: false },
-        );
-
-        written += documents.length;
+      if (!force && isUpToDate(previous, manifest)) {
+        log(`  ${source.code.padEnd(10)} up to date (${previous?.verseCount ?? 0} verses)`);
+        skipped += 1;
+        continue;
       }
 
-      await db.collection<{ _id: string }>(COLLECTIONS.translations).replaceOne(
-        { _id: `${manifest.translation}:${manifest.release}` },
-        {
-          _id: `${manifest.translation}:${manifest.release}`,
-          code: manifest.translation,
-          name: manifest.translationName,
-          release: manifest.release,
-          books: manifest.books.map((b) => b.bookId),
-          bookCount: manifest.totals.books,
-          chapterCount: manifest.totals.chapters,
-          verseCount: manifest.totals.verses,
-          licenceName: manifest.licenceName,
-          licenceUrl: manifest.licenceUrl,
-          rightsHolder: manifest.rightsHolder,
-          sourceUrl: manifest.sourceUrl,
-          archiveSha256: manifest.archiveSha256,
-          importedAt: new Date(),
-          available: source.registered,
-        },
-        { upsert: true },
-      );
+      await ledger.begin(manifest, 'load');
+      let written = 0;
 
-      log(`  ${source.code.padEnd(10)} ${written} verses`);
+      try {
+        // One book at a time: a whole Bible of verse documents is large
+        // enough that a single bulk write risks memory and a long lock.
+        for (const book of manifest.books) {
+          const parsed = JSON.parse(
+            await readFile(join(STAGING, paths.json(book.bookId)), 'utf8'),
+          ) as {
+            bookId: string;
+            verses: {
+              chapter: number;
+              verse: number;
+              verseEnd: number;
+              suffix?: string;
+              text: string;
+            }[];
+          };
+
+          // The manifest's release is authoritative, not the one pinned in
+          // sources.ts: it describes the bytes that were actually parsed. If
+          // the two disagree, documents would be written under one release
+          // and then deleted by the stale sweep below, which expects the
+          // other.
+          const documents = toVerseDocuments(source.code, manifest.release, [
+            {
+              book: { bookId: parsed.bookId, verses: parsed.verses },
+              canon: book.canon,
+              name: book.name,
+              order: getAnyBook(book.bookId)?.order ?? 0,
+              chapters: book.chapters,
+              sha256: book.sha256,
+            },
+          ]);
+
+          if (documents.length === 0) continue;
+
+          // Upserts keyed on the deterministic _id, so a re-run repairs
+          // rather than duplicates and a partial failure is safe to resume.
+          await verses.bulkWrite(
+            documents.map((doc) => ({
+              replaceOne: { filter: { _id: doc._id }, replacement: doc, upsert: true },
+            })),
+            { ordered: false },
+          );
+
+          written += documents.length;
+        }
+
+        // Verses from an earlier release of the same translation that this
+        // release no longer contains. Left behind they would be served as
+        // current text.
+        const stale = await verses.deleteMany({
+          translation: manifest.translation as VerseDocument['translation'],
+          release: { $ne: manifest.release },
+        });
+
+        await db.collection<{ _id: string }>(COLLECTIONS.translations).replaceOne(
+          { _id: `${manifest.translation}:${manifest.release}` },
+          {
+            code: manifest.translation,
+            name: manifest.translationName,
+            release: manifest.release,
+            books: manifest.books.map((b) => b.bookId),
+            bookCount: manifest.totals.books,
+            chapterCount: manifest.totals.chapters,
+            verseCount: manifest.totals.verses,
+            licenceName: manifest.licenceName,
+            licenceUrl: manifest.licenceUrl,
+            rightsHolder: manifest.rightsHolder,
+            sourceUrl: manifest.sourceUrl,
+            archiveSha256: manifest.archiveSha256,
+            importedAt: new Date(),
+            // Loading is not permission. Only translations registered in
+            // translations.ts may be offered, and isAvailable() is the gate.
+            available: source.registered,
+          },
+          { upsert: true },
+        );
+
+        await ledger.finish(manifest, 'load', {
+          verseCount: written,
+          bookCount: manifest.totals.books,
+        });
+
+        loaded += 1;
+        log(
+          `  ${source.code.padEnd(10)} ${String(written).padStart(6)} verses` +
+            (stale.deletedCount > 0 ? `  (${stale.deletedCount} stale removed)` : '') +
+            `  (${reasonToRun(previous, manifest)})`,
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await ledger.markFailed(manifest, 'load', message);
+        log(`  ${source.code.padEnd(10)} FAILED  ${message}`);
+        throw error;
+      }
     }
+
+    log(`
+${loaded} loaded, ${skipped} already current.`);
   } finally {
+    await ledger.close();
     await client.close();
+  }
+}
+
+/**
+ * Report what each stage has done, without doing any of it.
+ *
+ * The scripts call this to show state before and after a run, so an operator
+ * can see what will happen before committing to it.
+ */
+async function statusStage(sources: readonly BibleSource[]): Promise<void> {
+  const ledger = await openLedger();
+
+  try {
+    log('code       staged   uploaded            loaded');
+
+    let staged = 0;
+    let uploaded = 0;
+    let loaded = 0;
+
+    for (const source of sources) {
+      const paths = releasePaths(source.code, source.release);
+      const manifestPath = join(STAGING, paths.manifest);
+
+      if (!existsSync(manifestPath)) {
+        log(`${source.code.padEnd(10)} -`);
+        continue;
+      }
+
+      staged += 1;
+      const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as Manifest;
+
+      const describe = async (stage: IngestStage): Promise<string> => {
+        const run = await ledger.read(manifest.translation, manifest.release, stage);
+        if (!run) return 'never';
+        if (isUpToDate(run, manifest)) {
+          if (stage === 'upload') uploaded += 1;
+          else loaded += 1;
+          return `current`;
+        }
+        return run.status === 'running' ? 'interrupted' : reasonToRun(run, manifest);
+      };
+
+      const up = await describe('upload');
+      const ld = await describe('load');
+
+      log(`${source.code.padEnd(10)} yes      ${up.padEnd(19)} ${ld}`);
+    }
+
+    log(`
+${staged} staged, ${uploaded} uploaded, ${loaded} loaded.`);
+  } finally {
+    await ledger.close();
   }
 }
 
@@ -411,14 +644,16 @@ async function main(): Promise<void> {
   switch (command) {
     case 'list':
       return listStage();
+    case 'status':
+      return statusStage(sources);
     case 'fetch':
       return fetchStage(sources, force);
     case 'parse':
       return parseStage(sources);
     case 'upload':
-      return uploadStage(sources);
+      return uploadStage(sources, force);
     case 'load':
-      return loadStage(sources, !all);
+      return loadStage(sources, !all, force);
     case 'all':
       await fetchStage(sources, force);
       await parseStage(sources);
@@ -430,10 +665,11 @@ async function main(): Promise<void> {
           '',
           'Commands:',
           '  list                 show every source and whether it is registered',
+          '  status [codes]       what has been uploaded and loaded, without doing it',
           '  fetch [codes]        download publisher archives   (--force re-downloads)',
           '  parse [codes]        USFM to verse JSON + manifests',
-          '  upload [codes]       staging tree to DigitalOcean Spaces',
-          '  load [codes]         verse documents into MongoDB  (--all includes unregistered)',
+          '  upload [codes]       staging tree to DigitalOcean Spaces  (--force re-uploads)',
+          '  load [codes]         verse documents into MongoDB  (--all, --force)',
           '  all [codes]          fetch then parse',
           '',
           'With no codes, every source is processed.',

@@ -124,6 +124,15 @@ describe('toVerseDocuments', () => {
     });
   });
 
+  it('stamps documents with the release it was given', () => {
+    // The loader passes the MANIFEST's release, not the one pinned in
+    // sources.ts. When those disagreed, documents were written under one
+    // release and immediately deleted by the stale sweep, which matched on
+    // the other — silently emptying the translation.
+    const docs = toVerseDocuments('BSB', '2026-12-25', processArchive([romans]).books);
+    expect(docs.every((d) => d.release === '2026-12-25')).toBe(true);
+  });
+
   it('sorts by ordinal in reading order', () => {
     const ordinals = documents.map((d) => d.ordinal);
     expect([...ordinals].sort((a, b) => a - b)).toEqual(ordinals);

@@ -1,6 +1,6 @@
 # Bible Ingestion
 
-**Status:** Implemented and run — 34 translations staged locally, not yet uploaded or loaded
+**Status:** Implemented. 34 translations staged and parsed; load proven against a real MongoDB. Upload and production load await credentials.
 **Author:** Claude (Opus 5)
 **Date:** 2026-09-20
 **Implements:** AGENTS.md §21 (Source Provenance), §22.1 (Translation Licensing), §24 (MongoDB Rules)
@@ -54,7 +54,70 @@ in object storage.
 
 ---
 
-## 3. Storage layout
+## 3. PowerShell scripts
+
+Two scripts wrap the CLI for routine operation. Both are safe to run at any
+time and skip work that is already current.
+
+```powershell
+.\scripts\Push-BibleSources.ps1      # fetch, parse, upload to Spaces
+.\scripts\Push-BibleToMongo.ps1      # load verse documents into MongoDB
+```
+
+| Switch | Effect |
+|---|---|
+| `-Translation BSB, KJV` | limit to specific codes |
+| `-WhatIf` | report state and stop |
+| `-Force` | redo work the ledger says is current |
+| `-SkipFetch` / `-SkipParse` | upload script only |
+| `-RegisteredOnly` | Mongo script; load only servable translations |
+
+Both read `.env` at the repository root, rebuild the CLI when its source is
+newer than its output, print state before and after, and fail before doing
+any work when a setting is missing. Neither prints a secret: the Mongo script
+reports the cluster host and database, never the connection string.
+
+The scripts orchestrate; the CLI owns hashing, the ledger and every write, so
+a direct CLI invocation behaves identically.
+
+### Idempotency
+
+Two independent mechanisms, which is why an interrupted run is safe.
+
+**Deterministic ids.** Every verse document's `_id` is
+`TRANSLATION:BOOK.CHAPTER.VERSE`, so writes are upserts. A load that fails
+halfway is repaired by re-running, never duplicated. Verified: a forced
+reload of 62,188 verses left the count unchanged.
+
+**The run ledger.** `ingest_runs` in MongoDB records the SHA256 of the
+publisher archive each stage processed. Parsing is deterministic, so an
+unchanged hash means unchanged output and the stage is skipped.
+
+```text
+{ _id: 'BSB:2026-08-08:load',
+  stage: 'load', archiveSha256: 'c065fa11decc…',
+  status: 'completed', verseCount: 31086, host: '…' }
+```
+
+Work is redone when the hash differs, when the previous run failed, and when
+a run is still marked `running` — an interrupted run cannot be assumed
+complete.
+
+### Stale releases
+
+When a translation is reloaded at a new release, verses from the previous one
+are deleted. Without that, a book the publisher removed would still be served
+as current text.
+
+This is also where a real bug was caught before production. Documents were
+being stamped with the release pinned in `sources.ts` while the stale sweep
+matched on the manifest's release. When those disagreed, a load wrote 7,551
+verses and then deleted **all** of them. The manifest is now authoritative —
+it describes the bytes actually parsed — and a regression test covers it.
+
+---
+
+## 4. Storage layout
 
 Two rules shape every path.
 
@@ -89,7 +152,7 @@ proves the bytes are the ones whose licence was verified.
 
 ---
 
-## 4. MongoDB shape
+## 5. MongoDB shape
 
 **Verse documents**, one per translation per verse. This follows from
 decisions already made elsewhere rather than from storage preference:
@@ -128,7 +191,7 @@ Indexes are declared once in `documents.ts` and created by `load`:
 
 ---
 
-## 5. The canon problem
+## 6. The canon problem
 
 Only 13 of the 34 texts are 66-book Protestant Bibles. The rest carry
 deuterocanonical books, are Old Testament only, or are partial.
@@ -158,7 +221,7 @@ deuterocanonical references leak into surfaces that cannot render them.
 
 ---
 
-## 6. What the archives actually contained
+## 7. What the archives actually contained
 
 Three classes of surprise, all found by running the pipeline rather than by
 reading about USFM. Each is recorded here because each looked like a bug and
@@ -198,7 +261,7 @@ decision stays auditable rather than silent.
 
 ---
 
-## 7. Parser guarantees
+## 8. Parser guarantees
 
 `packages/ingest/src/usfm.ts` extracts canonical verse text and nothing else.
 Section headings, footnotes and cross-reference apparatus belong to their own
@@ -222,7 +285,7 @@ mutated at import.
 
 ---
 
-## 8. Provenance
+## 9. Provenance
 
 Every release carries a manifest satisfying §21:
 
@@ -246,7 +309,7 @@ across the same 1,189 chapters.
 
 ---
 
-## 9. What is loaded versus what is stored
+## 10. What is loaded versus what is stored
 
 **Staging and MongoDB are not the same set.** All 34 texts are downloaded and
 archived so the corpus is complete and re-import never depends on a publisher
@@ -262,10 +325,12 @@ not another ingestion run.
 
 ---
 
-## 10. Open items
+## 11. Open items
 
-1. **Upload and load have not been run.** Both need credentials; the pipeline
-   is written and typechecked but only `fetch` and `parse` have executed.
+1. **Upload has not been run against real Spaces.** It needs credentials. The
+   load stage has been exercised end to end against an in-memory MongoDB —
+   62,188 verses, ledger tracking, idempotent re-runs, stale cleanup — but
+   not yet against the production cluster.
 2. **Ordinal for deuterocanonical books** places them after Revelation
    (order 67–86). That keeps sorting stable but is not how Catholic or
    Orthodox editions print them. Worth revisiting when the reader gains a

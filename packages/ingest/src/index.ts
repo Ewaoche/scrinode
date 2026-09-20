@@ -49,3 +49,13 @@ export {
   type ManifestInput,
   type ProcessResult,
 } from './pipeline.js';
+
+export {
+  LEDGER_COLLECTION,
+  isUpToDate,
+  reasonToRun,
+  runId,
+  type IngestRun,
+  type IngestStage,
+  type RunStatus,
+} from './ledger.js';
