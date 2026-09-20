@@ -919,6 +919,30 @@ AI-translated Scripture must be clearly labeled.
 
 Never present AI-generated text as an official Bible version.
 
+## 22.1 Translation licensing
+
+`packages/scripture/src/translations.ts` is the translation registry. It is the
+only authority on which translations Scrinode may serve. The sourced terms
+behind every entry are in `docs/TRANSLATION_LICENSING.md`.
+
+**`isAvailable()` is the gate.** Registry membership is not permission, and
+neither is a permissive licence whose obligations are unimplemented. Never
+serve, ingest or cache a translation's text without it.
+
+Rules that are not negotiable:
+
+- A translation absent from the registry fails closed. Never add an entry to
+  make a code resolve.
+- Never fill in a licence field that a publisher has not stated. `'not-stated'`
+  is a real answer and must never be read as permission (§42).
+- Required attribution is stored verbatim. Paraphrasing a required notice
+  breaches the licence.
+- **Fair-use verse limits do not authorise Scrinode.** They govern quoting
+  within a work; serving passages on demand is redistribution and needs a
+  licence regardless of per-page verse count.
+- Zedek retrieves Scripture into model context (§20). Only texts with no
+  copyright holder may be retrieved until a publisher grants AI use in writing.
+
 ---
 
 # 23. Theological Integrity

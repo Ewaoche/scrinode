@@ -1,0 +1,424 @@
+# Translation Licensing Matrix
+
+**Status:** Researched and implemented — awaiting product-owner decisions (§9)
+**Author:** Claude (Opus 5)
+**Date:** 2026-09-20
+**Implements:** AGENTS.md §21 (Source Provenance), §22 (Translation Integrity), §42 (never invent licensing terms)
+**Code:** `packages/types/src/licence.ts`, `packages/scripture/src/translations.ts`
+
+---
+
+## 1. Why this document exists
+
+Scrinode cannot render a single verse until it knows which text it is allowed
+to render. The design documents name WEB and KJV as examples and give
+`license` as a field on imported sources, but nothing said which translations
+ship, what each licence actually permits, or how the system enforces it.
+
+A licence string in a `sources` document is documentation. It is not
+enforcement. This document supplies the terms; `packages/scripture/src/translations.ts`
+supplies the enforcement.
+
+**Every term below was read from the publisher's own licence page.** Where a
+publisher is silent, this document records silence. AGENTS.md §42 names
+"invent licensing terms" as a prohibited agent action, and §21 requires
+provenance on everything ingested. A plausible guess about a verse cap is
+worse than no registry at all, because it reads as verified.
+
+---
+
+## 2. The three tiers and what actually gates them
+
+| Tier | Texts | Gate | Who clears it |
+|------|-------|------|---------------|
+| 1 — Public domain | BSB, WEB, OEB | Nothing legal. Ingestion only. | Engineering, now |
+| 2 — Open licence | LSV, FBV | Attribution rendering in the UI | Engineering, after reader |
+| 3 — Licensed | ESV, NIV, NASB, … | A signed agreement | Product owner, weeks to months |
+
+These are not three sizes of the same task. Tier 1 is a data-loading problem.
+Tier 2 is a UI problem — a required notice must render somewhere the licence
+considers acceptable. Tier 3 is a commercial negotiation that no amount of
+engineering shortens.
+
+This is why `TranslationStatus` exists rather than a boolean. A translation
+can be known to the system, correct in its terms, and still not servable.
+
+---
+
+## 3. Tier 1 — Public domain
+
+No fees, no caps, no attribution obligation, no negotiation. These can be
+ingested and served today.
+
+### BSB — Berean Standard Bible ✅ available
+
+| | |
+|---|---|
+| Licence | Public domain (dedicated), effective 30 April 2023 |
+| Source | <https://berean.bible/terms.htm> |
+| Commercial use | Permitted — *"All uses are freely permitted."* |
+| Limits | None |
+| Attribution | **Not required** (publisher labels its suggested text "appreciated but not required") |
+| Redistribution | Full — *"all public domain materials may be freely reproduced, integrated, and adapted"* |
+| AI / RAG | Not addressed. No copyright to assert, so silence is harmless. |
+| Text | <https://berean.bible/downloads.htm> — USFM, **USJ (JSON)**, USX, TXT, XLSX |
+
+**Recommended default translation.** It is the only candidate publishing
+first-class JSON, it is contemporary English, and it carries no obligations
+whatsoever.
+
+The publisher *requests* that the Berean name not be used for derivative works
+that vary from the official text. Verbatim text is invited to bear the name.
+This is a request about naming, not a licence condition.
+
+### WEB — World English Bible ✅ available
+
+| | |
+|---|---|
+| Licence | Public domain — **not** CC0. *"it is not copyrighted"* |
+| Source | <https://worldenglish.bible/> |
+| Commercial use | Permitted — *"no royalty charge or any hassles"* |
+| Limits | None |
+| Attribution | Not required |
+| Redistribution | Full |
+| AI / RAG | Not addressed. No copyright to assert. |
+| Text | <https://ebible.org/find/details.php?id=engwebp> — USFM, USFX, TXT, SQL |
+
+**The one live constraint is trademark, not copyright.** "World English Bible"
+is a trademark of eBible.org and may identify only faithful copies. Public
+domain removes the copyright; it does not remove the trademark. Unmodified
+text may carry the name; modified text may not.
+
+`engwebp` is the Protestant-canon edition. Editions differ by canon and
+spelling, not by licence.
+
+### OEB — Open English Bible ⛔ blocked on completeness
+
+| | |
+|---|---|
+| Licence | CC0 1.0 |
+| Source | <https://openenglishbible.org/faq/> |
+| Commercial use | Permitted, unrestricted |
+| Limits | None |
+| Attribution | Not required (CC0 waives it) |
+| AI / RAG | Not addressed. CC0 leaves no restriction. |
+
+**Blocked on completeness, not on terms.** The OEB is an ongoing project and
+the Old Testament is not finished. Book coverage must be verified and the
+reader must handle missing books before this is offered. The licence is as
+permissive as any in this document.
+
+---
+
+## 4. Tier 2 — Open licence, obligations attached
+
+Free and commercially usable, but each carries conditions that must be
+implemented before the text may be served.
+
+### LSV — Literal Standard Version ⏳ pending attribution
+
+| | |
+|---|---|
+| Licence | CC BY-SA 4.0 |
+| Source | <https://www.lsvbible.com/p/get-lsv.html> |
+| Rights holder | Covenant Press, Covenant Christian Coalition |
+| Commercial use | Permitted, with heavier attribution |
+| Attribution | **Required.** Commercial use or whole-book distribution must name both *"Literal Standard Version (LSV)"* and the organisation |
+| Share-alike | **Yes** — derivatives inherit CC BY-SA |
+| AI / RAG | Not addressed |
+| Text | <https://ebible.org/find/details.php?id=englsv> — USFM, USFX, TXT, SQL |
+
+Scrinode is commercial and serves whole books, so the heavier attribution
+applies. Blocked until attribution rendering exists.
+
+> ⚠️ **Do not encode the 1,000-verse cap.** Several third-party summaries state
+> that LSV commercial citation is capped at 1,000 verses and must not
+> constitute a whole book. **That language does not appear on the publisher's
+> current permissions page.** It is not in the registry. If it matters
+> commercially, email Covenant Press rather than trusting either reading.
+
+Share-alike binds *derivative works*. Serving unmodified text is distribution,
+not adaptation, so a read-only reader is fine — but anything that adapts the
+text inherits BY-SA.
+
+### FBV — Free Bible Version ⛔ blocked on coverage
+
+| | |
+|---|---|
+| Licence | CC BY-SA 4.0 |
+| Source | <https://www.freebibleversion.org/> |
+| Rights holder | Dr. Jonathan Gallagher |
+| Commercial use | Permitted |
+| Attribution | Required; **no publisher-specified wording** — CC BY-SA 4.0 defaults apply |
+| Share-alike | Yes |
+| Text | <https://ebible.org/find/details.php?id=engfbv> — USFM, USFX, TXT, SQL |
+
+Principally a New Testament. Old Testament coverage is unverified and must be
+confirmed before offering it as a whole-Bible option.
+
+---
+
+## 5. NET Bible — a specific warning ⛔ requires agreement
+
+**The NET is not an open licence, despite its reputation.** It is frequently
+grouped with the free translations above. It does not belong there.
+
+| | |
+|---|---|
+| Licence | Custom proprietary grant |
+| Source | <https://netbible.com/copyright/> |
+| Rights holder | Biblical Studies Press, L.L.C.; commercial licensing via HarperCollins |
+| Commercial use | **Prohibited** under the free grant |
+| Redistribution | Only where given away with **zero** monetisation |
+
+The redistribution clause is the disqualifier, verbatim:
+
+> *"You may copy the NET Bible® and print it for others as long as you give it
+> away, do not charge for it … In this case, free means free. It cannot be
+> bundled with anything sold, used as a gift to solicit donations, nor can you
+> charge for shipping, handling, or anything."*
+
+That rules out a paid tier, advertising, and donation prompts. Any of the
+three breaches it.
+
+If an agreement is ever obtained, note the app-specific attribution: the
+marker `(NET)` must follow each quotation and, in internet-connected
+applications, **must be hyperlinked** to <http://netbible.org>. The translator
+notes are excluded even from the non-commercial grant.
+
+Because the licence reserves all permissions not expressly granted, AI and RAG
+use should be treated as **ungranted** absent written permission. That is an
+inference from the reservation clause, not licence text, and is recorded as
+such in the registry.
+
+A "complete book of the Bible" cap is repeated by third parties but does not
+appear on the publisher's current page. Not encoded.
+
+---
+
+## 6. Tier 3 — Licensed versions
+
+None of these can ship without a signed agreement. The registry deliberately
+contains **no entry for any of them**: an unregistered code fails closed, so
+`isAvailable('NIV')` returns `false` today rather than depending on a status
+field being set correctly.
+
+### 6.1 The mistake to avoid: fair-use verse counts do not apply to us
+
+Every publisher below states a fair-use quotation limit — 500 verses, 1,000
+verses, 25% of the work. **These do not authorise a Bible app.** They govern
+quoting Scripture *inside a work* such as a book or a sermon. Serving passages
+on demand is redistribution, and it needs a licence regardless of how few
+verses any single page shows.
+
+Friendship Press states this outright for the NRSVue:
+
+> *"The Fair Use Guidelines do not apply to Phone Applications, or other New
+> Media Platforms (web sites, apps, etc.)."*
+
+The other publishers simply do not contemplate the use case. Treat the numbers
+in this section as context, never as a permission to build on. Planning to
+"stay under 500 verses" is not a licensing strategy.
+
+### 6.2 AI positions — decision-critical for Zedek
+
+Two publishers have taken positions that bear on architecture, not just
+paperwork. Scrinode retrieves Scripture into model context (AGENTS.md §20), so
+these determine viability rather than merely cost.
+
+| Publisher | Position |
+|---|---|
+| **Crossway (ESV)** | ⚠️ Reportedly **not approving** projects where the ESV interacts with AI/LLMs |
+| **Biblica (NIV)** | Requires an explicit AI licence under a non-public "Publisher AI Policy" |
+| **Lockman (NASB)** | ✅ Explicitly **permits** AI systems — names Claude, ChatGPT, Copilot, Gemini — up to 1,000 verses per response |
+| Holman, Thomas Nelson, Tyndale, NCC | Silent |
+
+The Crossway position comes from secondary reporting (MinistryWatch,
+sellingjesus.org), **not** from Crossway's own permissions page, which says
+nothing about AI. It is decision-critical and unverified. **Confirm directly
+with Crossway before any plan assumes the ESV.**
+
+Lockman being the permissive outlier is genuinely surprising and makes the
+NASB the strongest licensed candidate for an AI-assisted product.
+
+### 6.3 Per-publisher summary
+
+| Version | Rights holder | Route | Fair-use limit (not applicable to apps) | Storage rule |
+|---|---|---|---|---|
+| **ESV** | Crossway | Free self-serve API at api.esv.org | 500 verses / half a book | Caching permitted up to 500 verses |
+| **NIV** | Biblica / HarperCollins | Negotiated; **commercial not available** on API.Bible | 500 verses, <25% | Not stated |
+| **NASB** | Lockman | API.Bible | 1,000 verses, <50% | **Max 1,000 verses in an electronic retrieval system** |
+| **CSB** | Holman (Lifeway) | API.Bible | 1,000 verses, <50% | Not stated |
+| **NKJV** | Thomas Nelson | API.Bible | 500 verses, <25% | Not stated |
+| **NLT** | Tyndale | API.Bible | 500 verses, <25% | Not stated |
+| **NRSVue** | NCC / Friendship Press | Bespoke via Petradi | 500 verses — **excluded for apps** | Not stated |
+
+**ESV is unusually permissive for a licensed text** — free, self-serve,
+published rate limits (5,000 queries/day, 60/minute), explicit caching
+allowance. The catch is that "non-commercial" is defined broadly enough to
+include **donations and advertising**. Any monetisation voids the free tier.
+
+**The NASB's 1,000-verse storage cap is the binding constraint**, not its
+quotation limit. A database-backed reader cannot hold the full text under
+gratis terms.
+
+No publisher in this tier publishes fees or approval timelines. That silence
+is itself the finding and should be budgeted as lead time.
+
+### 6.4 Aggregators
+
+**API.Bible** (American Bible Society) is the pragmatic route to four of the
+seven — NASB, CSB, NKJV and NLT under one agreement. It does **not** carry ESV
+or NRSV.
+
+- Free tier: 3 copyrighted Bibles, 5,000 calls/month, strictly non-commercial
+  — *"No ads, fees, freemium models or upsells allowed."*
+- Pro from $29/month; commercial licensing from $10/month per translation.
+- **Caching is generous**: an entire translation may be cached, refreshed at
+  least every 30 days.
+- ⚠️ **FUMS v3 instrumentation is mandatory** — every request must carry
+  `fums-version=3` and report viewing data back. It tracks device ID, session
+  ID and optionally a hashed user ID. This is a real engineering requirement
+  **and a privacy consideration**: it sends reader behaviour to a third party,
+  which interacts with the referrer-policy reasoning in
+  `apps/web/next.config.ts` about not revealing which passage someone studies.
+
+**Avoid Biblia.com** if caching matters — its terms explicitly prohibit
+extracting content "for storage in an alternate database system."
+
+**Bible Brain** (FCBH) is strong for global languages and audio, not for the
+English majors; requires providing content free of charge.
+
+**YouVersion Platform Services** reportedly opened an API in April 2026 with
+REST APIs and SDKs. Terms, translations and AI clauses could not be retrieved
+and are entirely unverified. Given YouVersion holds the deepest licence
+portfolio in the industry, this is the largest open opportunity and worth a
+direct look.
+
+### 6.5 Verification debt
+
+These could not be fetched from the publisher directly and rest on secondary
+sources. **Confirm exact notice wording before pasting any of it into a
+copyright page** — publishers require verbatim reproduction and secondary
+sources render punctuation and registration marks inconsistently.
+
+| Item | Status |
+|---|---|
+| Crossway AI/LLM non-approval | Secondary only — **decision-critical** |
+| Biblica / NIV terms and notice | Page returns 403 to automated fetch |
+| HarperCollins / NKJV terms and notice | Page returns 403 |
+| Tyndale / NLT terms | Page timed out |
+| NKJV "50% of an entire book" element | Unconfirmed against publisher |
+| All YouVersion Platform terms | Entirely unverified |
+
+---
+
+## 7. The AI question nobody has answered
+
+**No publisher in Tiers 1 or 2 addresses AI training or retrieval-augmented
+generation.** Not one.
+
+This matters more for Scrinode than for a plain Bible reader, because Zedek
+grounds its answers in retrieved Scripture (AGENTS.md §20). Every retrieval
+puts translation text into a model's context.
+
+The registry handles this by recording `aiUse: 'not-stated'` everywhere, and
+by enforcing a stronger rule in its place: **every translation marked
+available has no copyright holder at all.** Silence about AI is harmless when
+there is no copyright to assert. It is a live risk for CC BY-SA texts, where
+the share-alike obligation's application to model weights and RAG indexes is
+genuinely unsettled law.
+
+This is enforced by a test, not by convention:
+
+```ts
+it('serves only texts where no copyright restricts retrieval', () => {
+  for (const translation of availableTranslations()) {
+    expect(translation.licence.rightsHolder).toBe('public domain');
+  }
+});
+```
+
+When Tier 2 or Tier 3 texts are introduced, that test fails and forces the
+question to be answered deliberately rather than by omission.
+
+---
+
+## 8. How the registry enforces this
+
+`packages/scripture/src/translations.ts` is the machine-readable matrix.
+Before it, `TranslationCode` was a branded type with nothing behind it — any
+string could be cast to one. The registry is to `TranslationCode` what
+`books.ts` is to `BookId`.
+
+**Registry membership is not permission.** `isAvailable()` is the only gate
+that should decide whether text is served.
+
+Invariants held by tests in `translations.test.ts`:
+
+| Invariant | What it prevents |
+|-----------|------------------|
+| Available ⇒ commercial use permitted | Shipping a non-commercial text in a commercial product |
+| Available ⇒ full redistribution | Storing text we may only excerpt |
+| Available ⇒ no attribution required | Serving a text whose notice does not yet render |
+| Available ⇒ not share-alike | Inheriting BY-SA before anyone has considered it |
+| Available ⇒ rights holder is public domain | Feeding copyrighted text to RAG on unstated terms |
+| Available ⇒ has a text source and formats | Marking something servable with no way to load it |
+| Not available ⇒ has a stated reason | Silent blocks nobody can explain later |
+| No entry records `aiUse: 'permitted'` | Recording a permission no publisher granted |
+
+The attribution and share-alike invariants are deliberately strict: they fail
+the moment Tier 2 is introduced, which is the point. They are a checklist
+enforced by CI rather than a note someone may not read.
+
+---
+
+## 9. Open questions for the product owner
+
+1. **Monetisation model — answer this first.** It determines licence
+   eligibility more than any other decision. A paid tier, advertising *or* a
+   donation prompt each independently disqualify the NET, void the free ESV
+   API, and void API.Bible's free tier. "Free with donations" is not free by
+   any of these publishers' definitions.
+2. **Does Zedek retrieve licensed translation text?** If Scripture passed to a
+   model may be a licensed version, Crossway's reported position rules out the
+   ESV and Biblica requires a specific AI licence. If Zedek is grounded only in
+   public-domain texts, the entire problem disappears. This is an architecture
+   decision, not a legal one.
+3. **Default translation.** BSB recommended — public domain, contemporary
+   English, native JSON. KJV appears in the design docs but is archaic English
+   and was not researched; say if you want it.
+4. **Tier 3 intent.** Which licensed versions justify negotiation? API.Bible
+   covers NASB, CSB, NKJV and NLT in one agreement. ESV needs its own. NRSV is
+   bespoke with no published fees.
+5. **LSV verse cap.** Worth an email to Covenant Press if the LSV matters.
+6. **Coverage verification.** OEB and FBV need book coverage confirmed.
+
+---
+
+## 10. Recommendation
+
+**Ship BSB and WEB at MVP.** Both are public domain with no obligations, both
+publish machine-readable text, and together they give one contemporary
+translation and one traditional. That unblocks the Scripture reader
+immediately at zero licensing risk and zero cost.
+
+This is not a compromise position. Public-domain texts are the only ones that
+let Zedek retrieve Scripture into model context without an unanswered
+copyright question, and they are the only ones with no storage cap — the NASB
+allows 1,000 verses in a retrieval system, which no database-backed reader can
+work within.
+
+Then, in order:
+
+1. **Add LSV** once attribution rendering exists. Cheap, and it proves the
+   attribution path works before money is at stake.
+2. **Decide monetisation**, because it silently eliminates options.
+3. **Pursue API.Bible** if licensed versions matter — four translations, one
+   agreement, published pricing, generous caching. Budget for FUMS
+   instrumentation and review its privacy implications.
+4. **Investigate YouVersion Platform Services** — newest programme, deepest
+   licence portfolio, terms entirely unknown.
+
+Treat Tier 3 as a commercial track that runs in parallel and **gates nothing**.
+The reader ships on Tier 1.

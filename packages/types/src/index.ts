@@ -20,6 +20,14 @@ export type { ScriptureContext, SelectionScope } from './context.js';
 export type { SourceProvenance, Citation } from './provenance.js';
 
 export type {
+  LicencePermission,
+  RedistributionRight,
+  LicenceLimits,
+  AttributionRequirement,
+  LicenceTerms,
+} from './licence.js';
+
+export type {
   Permission,
   AdminRoleName,
   AdminRole,

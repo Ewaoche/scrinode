@@ -7,6 +7,17 @@
 export { BOOKS, getBook, isValidBookId, type BookMeta } from './books.js';
 
 export {
+  TRANSLATIONS,
+  availableTranslations,
+  getTranslation,
+  isAvailable,
+  isKnownTranslation,
+  requiredAttribution,
+  type TranslationMeta,
+  type TranslationStatus,
+} from './translations.js';
+
+export {
   InvalidReferenceError,
   expandToVerseIds,
   formatCanonical,
