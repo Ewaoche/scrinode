@@ -23,6 +23,13 @@ import {
 import { latestPointerPath, releasePaths, type Manifest } from './layout.js';
 import { COLLECTIONS, VERSE_INDEXES, type VerseDocument } from './documents.js';
 import {
+  EMBEDDING_DIMENSIONS,
+  EMBEDDING_MODEL,
+  RETRIEVAL_COLLECTION,
+  VECTOR_INDEX_NAME,
+  vectorIndexDefinition,
+} from './retrieval.js';
+import {
   LEDGER_COLLECTION,
   isUpToDate,
   reasonToRun,
@@ -621,6 +628,30 @@ ${staged} staged, ${uploaded} uploaded, ${loaded} loaded.`);
   }
 }
 
+/**
+ * Print the Atlas Vector Search index definition.
+ *
+ * Atlas creates vector indexes through its own UI or Admin API rather than
+ * through the driver, so this emits the exact JSON to paste, generated from
+ * the same constants the embedder uses. Writing it by hand would let the
+ * dimensions drift from the model.
+ */
+function vectorIndexCommand(): void {
+  log('Atlas Vector Search index');
+  log('');
+  log(`  database    ${process.env.MONGODB_DB ?? 'scrinode'}`);
+  log(`  collection  ${RETRIEVAL_COLLECTION}`);
+  log(`  index name  ${VECTOR_INDEX_NAME}`);
+  log(`  model       ${EMBEDDING_MODEL} (${EMBEDDING_DIMENSIONS} dimensions, fixed)`);
+  log('');
+  log('Atlas UI: Atlas Search -> Create Search Index -> Vector Search -> JSON Editor');
+  log('');
+  log(JSON.stringify(vectorIndexDefinition(), null, 2));
+  log('');
+  log('numDimensions must match the model exactly. Changing it later requires');
+  log('dropping the index and re-embedding every document.');
+}
+
 function listStage(): void {
   log('code       ebible id        registered  canon                    name');
   for (const source of BIBLE_SOURCES) {
@@ -646,6 +677,8 @@ async function main(): Promise<void> {
       return listStage();
     case 'status':
       return statusStage(sources);
+    case 'vector-index':
+      return vectorIndexCommand();
     case 'fetch':
       return fetchStage(sources, force);
     case 'parse':
@@ -666,6 +699,7 @@ async function main(): Promise<void> {
           'Commands:',
           '  list                 show every source and whether it is registered',
           '  status [codes]       what has been uploaded and loaded, without doing it',
+          '  vector-index         print the Atlas Vector Search index definition',
           '  fetch [codes]        download publisher archives   (--force re-downloads)',
           '  parse [codes]        USFM to verse JSON + manifests',
           '  upload [codes]       staging tree to DigitalOcean Spaces  (--force re-uploads)',

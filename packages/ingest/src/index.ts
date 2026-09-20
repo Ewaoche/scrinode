@@ -59,3 +59,17 @@ export {
   type IngestStage,
   type RunStatus,
 } from './ledger.js';
+
+export {
+  DERIVABLE_UNIT_TYPES,
+  EMBEDDING_DIMENSIONS,
+  EMBEDDING_MODEL,
+  PASSAGE_STRIDE,
+  PASSAGE_WINDOW,
+  PENDING_UNIT_TYPES,
+  RETRIEVAL_COLLECTION,
+  VECTOR_INDEX_NAME,
+  vectorIndexDefinition,
+  type RetrievalUnit,
+  type RetrievalUnitType,
+} from './retrieval.js';
