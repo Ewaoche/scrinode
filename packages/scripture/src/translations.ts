@@ -71,6 +71,35 @@ export const IS_COMMERCIAL_PRODUCT = true;
 const code = (value: string): TranslationCode => value as TranslationCode;
 
 /**
+ * Terms for a text eBible.org distributes with the copyright field reading
+ * exactly "public domain".
+ *
+ * These texts are old enough that copyright has lapsed, so there is nothing
+ * to permit or refuse: no fee, no cap, no attribution, no share-alike, and
+ * no copyright that could restrict retrieval into a model's context.
+ *
+ * Written once rather than repeated per entry (AGENTS.md §42). Anything whose
+ * terms differ in any respect spells them out in full instead of calling this.
+ */
+const ebiblePublicDomain = (translationId: string): LicenceTerms => ({
+  name: 'Public domain',
+  sourceUrl: `https://ebible.org/Scriptures/details.php?id=${translationId}`,
+  rightsHolder: 'public domain',
+  commercialUse: 'permitted',
+  redistribution: 'full',
+  limits: { completeBookPermitted: true },
+  attribution: { required: false },
+  aiUse: 'not-stated',
+  shareAlike: false,
+});
+
+/** USFM archive for an eBible.org translation. */
+const ebibleUsfm = (translationId: string): string =>
+  `https://ebible.org/Scriptures/${translationId}_usfm.zip`;
+
+const EBIBLE_FORMATS = ['USFM', 'USFX', 'TXT', 'SQL'] as const;
+
+/**
  * Public-domain and open-licence English translations.
  *
  * Ordered by how freely Scrinode may use them, most free first.
@@ -152,9 +181,10 @@ export const TRANSLATIONS: readonly TranslationMeta[] = [
     textSourceUrl: 'https://openenglishbible.org/',
     formats: ['USFM', 'TXT', 'EPUB'],
     blockedReason:
-      'Licence is maximally permissive, but the translation is incomplete — the ' +
-      'Old Testament is not finished. Book coverage must be verified and the ' +
-      'reader must handle missing books before this can be offered.',
+      'Licence is maximally permissive, but the translation is incomplete. ' +
+      "eBible.org's catalogue reports 17 of 39 Old Testament books (engoebus, " +
+      'verified 2026-09-20). The reader must handle missing books before this ' +
+      'can be offered.',
     licence: {
       name: 'CC0 1.0',
       sourceUrl: 'https://openenglishbible.org/faq/',
@@ -170,6 +200,98 @@ export const TRANSLATIONS: readonly TranslationMeta[] = [
         'Blocked on completeness, not on terms.',
       ],
     },
+  },
+  // --- Historic public-domain translations -------------------------------
+  //
+  // Copyright has lapsed on all of these, so they carry no obligations at
+  // all. eBible.org's catalogue records each one's copyright field as exactly
+  // "public domain" and distributes each as a USFM archive (verified
+  // 2026-09-20).
+  //
+  // These are a deliberate selection, not the whole catalogue. eBible.org
+  // publishes 34 public-domain English texts; most are regional editions,
+  // Septuagint translations or partial Bibles. A translation selector listing
+  // 34 entries is a worse product than one listing eight, and every entry is
+  // a maintenance commitment, so the rest stay out until asked for.
+  {
+    code: code('KJV'),
+    name: 'King James (Authorized) Version',
+    shortName: 'King James Version',
+    language: 'en',
+    status: 'available',
+    textSourceUrl: ebibleUsfm('eng-kjv2006'),
+    formats: [...EBIBLE_FORMATS],
+    licence: ebiblePublicDomain('eng-kjv2006'),
+  },
+  {
+    code: code('ASV'),
+    name: 'American Standard Version (1901)',
+    shortName: 'American Standard Version',
+    language: 'en',
+    status: 'available',
+    textSourceUrl: ebibleUsfm('eng-asv'),
+    formats: [...EBIBLE_FORMATS],
+    licence: ebiblePublicDomain('eng-asv'),
+  },
+  {
+    code: code('YLT'),
+    name: "Young's Literal Translation",
+    shortName: "Young's Literal",
+    language: 'en',
+    status: 'available',
+    textSourceUrl: ebibleUsfm('engylt'),
+    formats: [...EBIBLE_FORMATS],
+    licence: ebiblePublicDomain('engylt'),
+  },
+  {
+    code: code('DBY'),
+    name: 'Darby Translation',
+    shortName: 'Darby',
+    language: 'en',
+    status: 'available',
+    textSourceUrl: ebibleUsfm('engDBY'),
+    formats: [...EBIBLE_FORMATS],
+    licence: ebiblePublicDomain('engDBY'),
+  },
+  {
+    code: code('WBT'),
+    name: 'Noah Webster Bible',
+    shortName: 'Webster Bible',
+    language: 'en',
+    status: 'available',
+    textSourceUrl: ebibleUsfm('engwebster'),
+    formats: [...EBIBLE_FORMATS],
+    licence: ebiblePublicDomain('engwebster'),
+  },
+  {
+    code: code('GNV'),
+    name: 'Geneva Bible 1599',
+    shortName: 'Geneva Bible',
+    language: 'en',
+    status: 'available',
+    textSourceUrl: ebibleUsfm('enggnv'),
+    formats: [...EBIBLE_FORMATS],
+    licence: ebiblePublicDomain('enggnv'),
+  },
+  {
+    code: code('BBE'),
+    name: 'Bible in Basic English',
+    shortName: 'Basic English',
+    language: 'en',
+    status: 'available',
+    textSourceUrl: ebibleUsfm('engBBE'),
+    formats: [...EBIBLE_FORMATS],
+    licence: ebiblePublicDomain('engBBE'),
+  },
+  {
+    code: code('DRA'),
+    name: 'Douay-Rheims American Edition 1899',
+    shortName: 'Douay-Rheims',
+    language: 'en',
+    status: 'available',
+    textSourceUrl: ebibleUsfm('engDRA'),
+    formats: [...EBIBLE_FORMATS],
+    licence: ebiblePublicDomain('engDRA'),
   },
   {
     code: code('LSV'),

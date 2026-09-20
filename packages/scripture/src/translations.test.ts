@@ -36,6 +36,13 @@ describe('TRANSLATIONS registry', () => {
     }
   });
 
+  it('offers a meaningful choice of translations at MVP', () => {
+    // Ten public-domain texts: two modern (BSB, WEB) and eight historic.
+    // Asserted as a number so a translation cannot be dropped silently by an
+    // edit that was only meant to adjust one entry.
+    expect(availableTranslations()).toHaveLength(10);
+  });
+
   it('explains every translation that is not available', () => {
     for (const translation of TRANSLATIONS) {
       if (translation.status !== 'available') {

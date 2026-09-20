@@ -468,6 +468,41 @@ Verse structure maps almost directly onto `Verse` in `@scrinode/types`:
   `EXO` … `JUD`, `REV`. No mapping layer is needed.
 - Chapter counts match for all 66 books.
 
+### The wider free catalogue
+
+eBible.org's machine-readable catalogue
+(<https://ebible.org/Scriptures/translations.csv>) lists **56 English entries,
+52 of them redistributable and downloadable**. Analysed 20 September 2026:
+
+| Copyright field | Count | Usable commercially? |
+|---|---|---|
+| Exactly "public domain" | **34** | ✅ Yes, unconditionally |
+| Named copyright holder | 18 | ⚠️ Each needs its licence read |
+
+⚠️ **`Redistributable=True` does not mean free for commercial use.** It means
+the text may be redistributed *under its own terms*. The NET is flagged
+redistributable and is non-commercial only (§6). Never batch-approve on that
+column.
+
+The 18 copyrighted texts include FBV, LSV, NET, the Unlocked Literal Bible,
+Translation for Translators, the Orthodox Jewish Bible and the Text-Critical
+English NT. Each carries a named rights holder and needs the same treatment
+LSV and FBV received before it could ship.
+
+**Registered as available (10):** BSB and WEB (modern), plus KJV, ASV, YLT,
+Darby, Webster, Geneva 1599, Bible in Basic English and Douay-Rheims 1899.
+
+**Deliberately not registered.** The remaining public-domain texts are mostly
+regional editions (WEB British, Catholic, Messianic, Updated), Septuagint
+translations (Brenton, LXX2012) and partial Bibles (Tyndale NT, Wycliffe
+portions, Targum Onkelos). A selector listing 34 entries is a worse product
+than one listing ten, and every entry is a maintenance commitment. They remain
+one registry entry away if wanted.
+
+**1,256 translations across all languages** are in the same catalogue. When
+Scrinode goes multilingual, the same public-domain analysis applies per
+language — the constraint is product scope, not licensing.
+
 ### Two things to carry into ingestion
 
 **Versification differs between translations.** BSB reports 31,086 verses and
@@ -486,10 +521,17 @@ mirror staying up.
 
 ## 12. Recommendation
 
-**Ship BSB and WEB at MVP.** Both are public domain with no obligations, both
-publish machine-readable text, and together they give one contemporary
-translation and one traditional. That unblocks the Scripture reader
-immediately at zero licensing risk and zero cost.
+**Ship the ten public-domain translations at MVP.** BSB and WEB for
+contemporary English; KJV, ASV, YLT, Darby, Webster, Geneva 1599, Bible in
+Basic English and Douay-Rheims for historic, literal, simplified and Catholic
+readings. All ten are public domain with no obligations, all publish
+machine-readable text, and together they support genuine translation
+comparison — a named MVP capability — at zero licensing risk and zero cost.
+
+That is a stronger comparison set than most commercial Bible apps offer for
+free, and it covers the useful axes: formal equivalence (ASV, YLT, Darby),
+traditional (KJV, Geneva), simplified (BBE), Catholic canon (Douay-Rheims)
+and modern readable (BSB).
 
 This is not a compromise position. Public-domain texts are the only ones that
 let Zedek retrieve Scripture into model context without an unanswered
