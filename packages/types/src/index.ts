@@ -10,6 +10,7 @@ export type {
   TranslationCode,
   CanonicalVerseId,
   Testament,
+  Canon,
   BibleReference,
   Book,
   Verse,

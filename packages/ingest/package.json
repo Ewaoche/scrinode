@@ -1,0 +1,44 @@
+{
+  "name": "@scrinode/ingest",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "bin": {
+    "scrinode-ingest": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src",
+    "test": "vitest run",
+    "fetch": "node dist/cli.js fetch",
+    "parse": "node dist/cli.js parse",
+    "upload": "node dist/cli.js upload",
+    "load": "node dist/cli.js load"
+  },
+  "dependencies": {
+    "@scrinode/scripture": "workspace:*",
+    "@scrinode/types": "workspace:*",
+    "@aws-sdk/client-s3": "^3.700.0",
+    "mongodb": "^7.0.0",
+    "yauzl": "^3.2.0"
+  },
+  "devDependencies": {
+    "@scrinode/config": "workspace:*",
+    "@scrinode/eslint-config": "workspace:*",
+    "@types/node": "^22.10.5",
+    "@types/yauzl": "^2.10.3",
+    "eslint": "^9.18.0",
+    "typescript": "^5.7.3",
+    "vitest": "^5.0.1"
+  }
+}

@@ -42,3 +42,9 @@ pnpm-debug.log*
 
 # Vercel
 .vercel
+
+# Bible source staging — downloaded publisher archives and parsed output.
+# ~650MB for all 34 translations. Reproducible with
+# `node packages/ingest/dist/cli.js fetch parse`, and the canonical copy
+# lives in object storage, so it is never committed.
+.ingest/

@@ -1,4 +1,4 @@
-import type { BookId, Testament } from '@scrinode/types';
+import type { BookId, Canon, Testament } from '@scrinode/types';
 
 /**
  * Canonical book registry — 66 books, Protestant canon, canonical order.
@@ -100,12 +100,121 @@ export const BOOKS: readonly BookMeta[] = [
   book('REV', 'Revelation', 'NT', 66, 22),
 ];
 
-const BY_ID = new Map<string, BookMeta>(BOOKS.map((b) => [b.id, b]));
+/**
+ * Deuterocanonical books.
+ *
+ * Carried by 13 of the 34 public-domain English translations — Douay-Rheims,
+ * the Septuagints, KJV with Apocrypha, the Revised Version and the WEB's
+ * Catholic and Classic editions. The 66-book Protestant editions do not carry
+ * them, so a translation's book list is a property of that translation, never
+ * an assumption the reader may make.
+ *
+ * Ordered as USFM orders them, which is the order these editions print.
+ * `order` continues from 66 so a mixed sort stays stable; it is not a claim
+ * that any tradition places them there.
+ *
+ * Names and chapter counts were read from the USFM files themselves
+ * (`\h` headers and `\c` markers across all 13 texts, 2026-09-20), not from
+ * memory. Where editions disagree on length the highest count is recorded, so
+ * a reference that exists in any edition validates.
+ */
+const dcBook = (id: string, name: string, order: number, chapters: number): BookMeta => ({
+  id: id as BookId,
+  name,
+  testament: 'OT',
+  order,
+  chapters,
+});
 
+export const DEUTEROCANONICAL_BOOKS: readonly BookMeta[] = [
+  dcBook('TOB', 'Tobit', 67, 14),
+  dcBook('JDT', 'Judith', 68, 16),
+  dcBook('ESG', 'Esther (Greek)', 69, 16),
+  dcBook('WIS', 'Wisdom of Solomon', 70, 19),
+  dcBook('SIR', 'Sirach', 71, 51),
+  dcBook('BAR', 'Baruch', 72, 6),
+  dcBook('LJE', 'Epistle of Jeremy', 73, 1),
+  dcBook('S3Y', 'Song of the Three Holy Children', 74, 1),
+  dcBook('SUS', 'Susanna', 75, 1),
+  dcBook('BEL', 'Bel and the Dragon', 76, 1),
+  dcBook('1MA', '1 Maccabees', 77, 16),
+  dcBook('2MA', '2 Maccabees', 78, 15),
+  dcBook('3MA', '3 Maccabees', 79, 7),
+  dcBook('4MA', '4 Maccabees', 80, 18),
+  dcBook('1ES', '1 Esdras', 81, 9),
+  dcBook('2ES', '2 Esdras', 82, 16),
+  dcBook('MAN', 'Prayer of Manasses', 83, 1),
+  dcBook('PS2', 'Psalm 151', 84, 1),
+  dcBook('PSS', 'Psalms of Solomon', 85, 18),
+  dcBook('DAG', 'Daniel (Greek)', 86, 14),
+];
+
+/** Every book Scrinode can represent, both canons. */
+export const ALL_BOOKS: readonly BookMeta[] = [...BOOKS, ...DEUTEROCANONICAL_BOOKS];
+
+const BY_ID = new Map<string, BookMeta>(BOOKS.map((b) => [b.id, b]));
+const BY_ID_ALL = new Map<string, BookMeta>(ALL_BOOKS.map((b) => [b.id, b]));
+const DC_IDS = new Set<string>(DEUTEROCANONICAL_BOOKS.map((b) => b.id));
+
+/**
+ * Find a Protestant-canon book.
+ *
+ * Deliberately does NOT resolve deuterocanonical books: most of Scrinode
+ * works in the 66-book canon, and silently widening this would let
+ * deuterocanonical references leak into contexts that cannot render them.
+ * Use `getAnyBook` where both canons are meant.
+ */
 export function getBook(id: BookId | string): BookMeta | undefined {
   return BY_ID.get(id.toUpperCase());
+}
+
+/** Find a book in either canon. */
+export function getAnyBook(id: BookId | string): BookMeta | undefined {
+  return BY_ID_ALL.get(id.toUpperCase());
 }
 
 export function isValidBookId(id: string): id is BookId {
   return BY_ID.has(id.toUpperCase());
 }
+
+/** Whether a code names a book in either canon. */
+export function isKnownBookId(id: string): id is BookId {
+  return BY_ID_ALL.has(id.toUpperCase());
+}
+
+export function isDeuterocanonical(id: string): boolean {
+  return DC_IDS.has(id.toUpperCase());
+}
+
+/** Which canon a book belongs to, or `undefined` if the code is unknown. */
+export function canonOf(id: string): Canon | undefined {
+  const upper = id.toUpperCase();
+  if (DC_IDS.has(upper)) return 'deuterocanonical';
+  return BY_ID.has(upper) ? 'protestant' : undefined;
+}
+
+/**
+ * USFM file codes that are not books.
+ *
+ * eBible.org archives carry front matter, introductions, glossaries and
+ * publisher-defined extras alongside Scripture. Ingestion must skip these:
+ * they have no chapter or verse structure and would otherwise become
+ * malformed references.
+ */
+export const USFM_NON_BOOK_CODES: ReadonlySet<string> = new Set([
+  'FRT', // front matter
+  'INT', // introduction
+  'GLO', // glossary
+  'BAK', // back matter
+  'OTH', // other peripheral matter
+  'CNC', // concordance
+  'TDX', // topical index
+  'NDX', // names index
+  'XXA',
+  'XXB',
+  'XXC',
+  'XXD',
+  'XXE',
+  'XXF',
+  'XXG',
+]);

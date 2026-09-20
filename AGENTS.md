@@ -949,6 +949,40 @@ Rules that are not negotiable:
 - Zedek retrieves Scripture into model context (§20). Only texts with no
   copyright holder may be retrieved until a publisher grants AI use in writing.
 
+## 22.2 Canon
+
+`books.ts` holds two tiers: `BOOKS` is the 66-book Protestant canon and
+`DEUTEROCANONICAL_BOOKS` the 20 additional books the Septuagint, Catholic and
+Apocrypha-bearing editions carry. `ALL_BOOKS` is both.
+
+- `getBook` and `isValidBookId` resolve the Protestant canon **only**. Do not
+  widen them. Use `getAnyBook` and `isKnownBookId` where both canons are meant.
+- A translation's book list is a property of that translation, never an
+  assumption the reader may make. Thirteen of the registered sources carry
+  deuterocanon; most do not.
+- Versification differs between traditions. Brenton's Psalms has 151 chapters,
+  Greek Esther 16, Douay-Rheims Daniel 14. Never validate an import against
+  the registry's chapter counts, which record Hebrew versification.
+- Never invent a book name or chapter count. Both were read from the USFM
+  sources (§21); anything new must be too.
+
+## 22.3 Ingestion
+
+`@scrinode/ingest` acquires and loads Scripture text. `docs/BIBLE_INGESTION.md`
+records the pipeline and what the archives actually contained.
+
+- Source archives are immutable and addressed by release date. A re-import
+  never overwrites earlier bytes: a verse that changes silently under a saved
+  note is a correctness failure, not a refresh.
+- Keep the publisher's archive and its SHA256. It is what proves the bytes are
+  the ones whose licence was verified, and it allows re-parsing without
+  returning to the publisher.
+- Scripture is never mutated at import. Strip markup, not content — footnotes
+  and cross-references are removed entirely (§2), and characters the publisher
+  put in the text stay in the text.
+- Staging is not permission. Texts may be archived without being registered;
+  `isAvailable()` still decides what may be served.
+
 ---
 
 # 23. Theological Integrity

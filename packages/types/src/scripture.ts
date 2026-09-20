@@ -26,6 +26,17 @@ export type CanonicalVerseId = string & { readonly __brand: 'CanonicalVerseId' }
 export type Testament = 'OT' | 'NT';
 
 /**
+ * Which canon a book belongs to.
+ *
+ * Kept separate from `Testament` rather than widening it: a deuterocanonical
+ * book still sits in the Old Testament era, and translations disagree about
+ * inclusion rather than about era. Douay-Rheims, the Septuagints and
+ * KJV-with-Apocrypha carry these books; the 66-book Protestant editions do
+ * not, and the same `BookId` must mean the same book in both.
+ */
+export type Canon = 'protestant' | 'deuterocanonical';
+
+/**
  * A reference to a verse or a contiguous range within one chapter.
  *
  * `verseEnd` is absent for a single verse. When present it is inclusive and
