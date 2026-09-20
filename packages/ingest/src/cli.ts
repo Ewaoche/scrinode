@@ -706,7 +706,7 @@ async function embedStage(
     );
   }
 
-  const { MongoClient } = await import('mongodb');
+  const { Binary, MongoClient } = await import('mongodb');
   const client = new MongoClient(uri);
 
   try {
@@ -782,7 +782,11 @@ async function embedStage(
               filter: { _id: unit._id },
               update: {
                 $set: {
-                  embedding,
+                  // BSON has no float type, so an array of numbers is stored
+                  // as 1024 doubles — 14.2 KB per unit, measured. BinData
+                  // subtype 9 is 4 KB for the same vector, and Atlas indexes
+                  // both identically.
+                  embedding: Binary.fromFloat32Array(new Float32Array(embedding)),
                   embeddingModel: EMBEDDING_MODEL,
                   embeddedAt: new Date(),
                 },
@@ -792,7 +796,21 @@ async function embedStage(
         ];
       });
 
-      await units.bulkWrite(writes, { ordered: false });
+      // An unordered bulkWrite collects failures into its result instead of
+      // throwing, so the count must be checked. A full cluster rejects every
+      // write while the loop happily reports progress and exits zero — which
+      // is exactly what happened on the first full run.
+      const written = await units.bulkWrite(writes, { ordered: false });
+      const persisted = written.modifiedCount + written.upsertedCount;
+
+      if (persisted < writes.length) {
+        const [first] = written.getWriteErrors();
+        fail(
+          `Wrote ${persisted} of ${writes.length} vectors. MongoDB rejected the rest` +
+            (first ? `: ${first.errmsg}` : '.') +
+            '\nEmbedding stopped. Re-run once the cause is resolved; completed work is kept.',
+        );
+      }
 
       embedded += stale.length;
 

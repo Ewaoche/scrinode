@@ -1,3 +1,4 @@
+import type { Binary } from 'mongodb';
 import type { BookId, Canon, Testament, TranslationCode } from '@scrinode/types';
 
 /**
@@ -99,8 +100,19 @@ export interface RetrievalUnit {
   readonly release?: string;
 
   // --- embedding -----------------------------------------------------------
-  /** Absent until embedded, which is how the embedder finds work to do. */
-  readonly embedding?: readonly number[];
+  /**
+   * The vector, stored as a BSON `BinData` float32 array rather than an
+   * array of numbers.
+   *
+   * BSON has no float type: an array of numbers becomes 1024 doubles, which
+   * measured at 14.2 KB per unit and filled a 512 MB cluster at 60% of one
+   * translation. The same vector as `BinData` subtype 9 is 4 KB — a bit over
+   * a third the size — and Atlas indexes both identically, so the index
+   * definition does not change.
+   *
+   * Absent until embedded, which is how the embedder finds work to do.
+   */
+  readonly embedding?: Binary;
   readonly embeddingModel?: string;
   readonly embeddedAt?: Date;
   /** SHA256 of `text`, so an edit is detectable without comparing vectors. */
