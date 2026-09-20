@@ -325,7 +325,70 @@ not another ingestion run.
 
 ---
 
-## 11. Open items
+## 11. Retrieval, measured
+
+Tested against 5,609 embedded BSB units on 2026-09-20. Questions were worded
+to share no distinctive keywords with their targets.
+
+| Question | Top hit |
+|---|---|
+| how should I pray | MAT.6.7-12 (the Lord's Prayer) |
+| what happens after we die | 1CO.15.19-24 |
+| advice about money and greed | PRO.23.4-9 |
+| the shepherd psalm | PSA.23 |
+| instructions for building the tabernacle | EXO.35.10-15 |
+
+### Do not filter by unit type
+
+Granularities compete on score and the right one wins. "The shepherd psalm"
+surfaces Psalm 23 as a **chapter** unit; "how should I pray" surfaces Matthew
+6 **passages**. Both were found without a type filter.
+
+Filtering to `passage` hides every chapter shorter than one window. Psalm 23
+is six verses, so it has no passage unit at all — with `--type=passage` the
+best available answer was Isaiah 40.
+
+### Scores separate signal from noise
+
+| Query | Score |
+|---|---|
+| instructions for building the tabernacle | 0.854 |
+| the shepherd psalm | 0.801 |
+| how should I pray | 0.768 |
+| recipe for chocolate cake | 0.638 |
+| how to configure a firewall | 0.622 |
+
+Vector search always returns its top-k, so an unrelated question still gets
+results. `LIKELY_RELEVANT_SCORE` (0.68) marks the gap. It is deliberately not
+enforced in `searchUnits`: the right floor depends on what the caller does
+with a miss, and Zedek saying "I have nothing relevant" is better than Zedek
+grounding on a 0.62 match.
+
+---
+
+## 12. Storage — deferred decision
+
+A vector is 4.74 KB as BinData float32, measured. BSB's 41,829 units project
+to **225 MB**, and all 34 translations to **5.5 GB**.
+
+The current Atlas cluster is M0, capped at 512 MB. A full BSB embedding run
+fills it. Three ways forward, none yet chosen:
+
+| Option | BSB size | Trade |
+|---|---|---|
+| Upgrade to M10 | 225 MB of 10 GB | ~$57/month |
+| Passages + chapters only | ~58 MB | no verse-level vectors |
+| `int8` quantization | ~56 MB | some recall loss |
+
+Dropping verse-level units is less costly than it sounds: the Verse Inspector
+looks a verse up by reference from the `verses` collection, which is not a
+vector search. Verse units matter for retrieval only when a question targets
+one specific verse whose wording is not distinctive enough to surface its
+passage.
+
+---
+
+## 13. Open items
 
 1. **Upload has not been run against real Spaces.** It needs credentials. The
    load stage has been exercised end to end against an in-memory MongoDB —

@@ -694,6 +694,7 @@ async function embedStage(
   limit: number | undefined,
   force: boolean,
   batchSize: number,
+  scope: { books?: readonly string[]; unitType?: string } = {},
 ): Promise<void> {
   const uri = process.env.MONGODB_URI;
   if (!uri) fail('Embedding needs MONGODB_URI in the environment.');
@@ -714,9 +715,18 @@ async function embedStage(
     const db = client.db(process.env.MONGODB_DB ?? 'scrinode');
     const units = db.collection<RetrievalUnit>(RETRIEVAL_COLLECTION);
 
+    // Without a scope the embedder works in insertion order, which for a
+    // partial run means one book rather than a useful spread. Narrowing by
+    // book or unit type is also how a single correction gets re-embedded
+    // without paying for the whole corpus again.
+    const scoped: Record<string, unknown> = {};
+    if (scope.books?.length) scoped['bookId'] = { $in: scope.books };
+    if (scope.unitType) scoped['unitType'] = scope.unitType;
+
     const pending = force
-      ? {}
+      ? scoped
       : {
+          ...scoped,
           $or: [{ embedding: { $exists: false } }, { embeddingModel: { $ne: EMBEDDING_MODEL } }],
         };
 
@@ -1096,10 +1106,23 @@ async function main(): Promise<void> {
       const limitValue = numeric('--limit');
       const batchValue = numeric('--batch');
 
+      const books = rest
+        .find((a) => a.startsWith('--books='))
+        ?.split('=')[1]
+        ?.split(',')
+        .map((b) => b.trim().toUpperCase())
+        .filter(Boolean);
+
+      const type = rest.find((a) => a.startsWith('--type='))?.split('=')[1];
+
       return embedStage(
         Number.isFinite(limitValue) ? limitValue : undefined,
         force,
         Number.isFinite(batchValue) ? batchValue : EMBED_BATCH_SIZE,
+        {
+          ...(books?.length ? { books } : {}),
+          ...(type ? { unitType: type } : {}),
+        },
       );
     }
     case 'fetch':
@@ -1124,7 +1147,7 @@ async function main(): Promise<void> {
           '  status [codes]       what has been uploaded and loaded, without doing it',
           '  vector-index         print the vector index definition  (--create applies it)',
           '  units [codes]        build retrieval units from loaded verses  (--all)',
-          '  embed                embed units that need it  (--limit=N, --batch=N, --force)',
+          '  embed                embed units  (--limit=N, --batch=N, --books=GEN,ROM, --type=passage, --force)',
           '  search "question"    vector search  (--translation=, --type=, --book=, --limit=)',
           '  fetch [codes]        download publisher archives   (--force re-downloads)',
           '  parse [codes]        USFM to verse JSON + manifests',

@@ -92,6 +92,7 @@ export {
 } from './voyage.js';
 
 export {
+  LIKELY_RELEVANT_SCORE,
   formatRange,
   searchUnits,
   type SearchHit,

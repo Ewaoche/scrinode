@@ -19,7 +19,15 @@ export interface SearchOptions {
   readonly apiKey: string;
   /** Restrict to one translation. Without it, results repeat across them. */
   readonly translation?: string;
-  /** Restrict to one granularity, e.g. only passages. */
+  /**
+   * Restrict to one granularity.
+   *
+   * Usually leave this unset. Granularities compete on score, and the right
+   * one wins: "the shepherd psalm" surfaces Psalm 23 as a chapter unit,
+   * while "how should I pray" surfaces Matthew 6 passages. Filtering to
+   * `passage` hides every chapter shorter than one window — Psalm 23 is six
+   * verses and therefore has no passage unit at all.
+   */
   readonly unitType?: RetrievalUnit['unitType'];
   readonly bookId?: string;
   readonly testament?: 'OT' | 'NT';
@@ -123,6 +131,20 @@ export async function searchUnits(
 
   return hits;
 }
+
+/**
+ * Score below which a hit is probably noise.
+ *
+ * Vector search always returns its top-k, so an unrelated question still
+ * gets results. Measured against this corpus, relevant hits score 0.74-0.85
+ * and deliberately irrelevant ones ("recipe for chocolate cake", "how to
+ * configure a firewall") score 0.62-0.64.
+ *
+ * This is a guide for callers, not applied here: the right floor depends on
+ * what the caller does with a miss, and Zedek answering "I have nothing
+ * relevant" is better than Zedek grounding on a 0.62 match.
+ */
+export const LIKELY_RELEVANT_SCORE = 0.68;
 
 /** Render a reference range for display, collapsing a single-verse range. */
 export function formatRange(hit: Pick<SearchHit, 'referenceStart' | 'referenceEnd'>): string {
