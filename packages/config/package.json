@@ -2,11 +2,24 @@
   "name": "@scrinode/config",
   "version": "0.0.0",
   "private": true,
-  "files": ["tsconfig"],
+  "type": "module",
+  "files": ["tsconfig", "vitest"],
   "exports": {
     "./tsconfig/base.json": "./tsconfig/base.json",
     "./tsconfig/library.json": "./tsconfig/library.json",
     "./tsconfig/next.json": "./tsconfig/next.json",
-    "./tsconfig/nest.json": "./tsconfig/nest.json"
+    "./tsconfig/nest.json": "./tsconfig/nest.json",
+    "./vitest/jsdom": {
+      "types": "./vitest/jsdom.d.ts",
+      "default": "./vitest/jsdom.js"
+    }
+  },
+  "peerDependencies": {
+    "@vitejs/plugin-react": "*",
+    "vitest": "*"
+  },
+  "peerDependenciesMeta": {
+    "@vitejs/plugin-react": { "optional": true },
+    "vitest": { "optional": true }
   }
 }

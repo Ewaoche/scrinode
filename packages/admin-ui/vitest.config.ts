@@ -1,12 +1,4 @@
-import react from '@vitejs/plugin-react';
-import { defineConfig } from 'vitest/config';
+import { jsdomConfig } from '@scrinode/config/vitest/jsdom';
 
-export default defineConfig({
-  plugins: [react()],
-  test: {
-    environment: 'jsdom',
-    include: ['src/**/*.test.{ts,tsx}'],
-    setupFiles: ['./vitest.setup.ts'],
-    globals: true,
-  },
-});
+/** Worker counts are capped in the shared preset; see its comment for why. */
+export default jsdomConfig();

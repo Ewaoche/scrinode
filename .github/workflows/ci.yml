@@ -41,7 +41,14 @@ jobs:
 
       - name: Verify
         # Boundary violations, type errors and failing tests all fail here.
-        run: pnpm verify
+        # GitHub's standard runners have 2 cores. Turborepo defaults to 10
+        # concurrent tasks, and three of them spawn jsdom workers; combined,
+        # that oversubscribes the CPU badly enough that a Vitest worker can
+        # miss its 60-second startup handshake and fail the run. That timeout
+        # is a hardcoded constant in Vitest and cannot be raised, so the fix
+        # is to not oversubscribe. Worker counts are also capped per package
+        # in @scrinode/config/vitest/jsdom.
+        run: pnpm verify --concurrency=4
 
   e2e:
     name: End-to-end
