@@ -24,6 +24,11 @@ const PROVIDED_EXTERNALLY = new Set([
   // Vitest and CI runners.
   'CI',
   'VITEST',
+  // Set by the operating system. The ingestion ledger records which machine
+  // ran a stage, so a shared ledger stays attributable. Documenting these in
+  // .env.example would imply they are configuration, which they are not.
+  'COMPUTERNAME',
+  'HOSTNAME',
 ]);
 
 function documentedVariables(): Set<string> {
