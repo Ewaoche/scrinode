@@ -1052,19 +1052,23 @@ async function main(): Promise<void> {
   }
   const force = rest.includes('--force');
   const all = rest.includes('--all');
-  const sources = selectSources(rest);
+
+  // Resolved lazily. Only some commands take translation codes; `search`
+  // takes a question, and resolving eagerly rejected it as an unknown
+  // translation before the command ever ran.
+  const sources = (): readonly BibleSource[] => selectSources(rest);
 
   switch (command) {
     case 'list':
       return listStage();
     case 'status':
-      return statusStage(sources);
+      return statusStage(sources());
     case 'vector-index':
       return vectorIndexCommand(rest.includes('--create'));
     case 'search':
       return searchStage(rest);
     case 'units':
-      return unitsStage(sources, !all);
+      return unitsStage(sources(), !all);
     case 'embed': {
       const numeric = (flag: string): number => {
         const found = rest.find((a) => a.startsWith(`${flag}=`));
@@ -1081,16 +1085,16 @@ async function main(): Promise<void> {
       );
     }
     case 'fetch':
-      return fetchStage(sources, force);
+      return fetchStage(sources(), force);
     case 'parse':
-      return parseStage(sources);
+      return parseStage(sources());
     case 'upload':
-      return uploadStage(sources, force);
+      return uploadStage(sources(), force);
     case 'load':
-      return loadStage(sources, !all, force);
+      return loadStage(sources(), !all, force);
     case 'all':
-      await fetchStage(sources, force);
-      await parseStage(sources);
+      await fetchStage(sources(), force);
+      await parseStage(sources());
       return;
     default:
       log(
