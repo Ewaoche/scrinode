@@ -424,7 +424,67 @@ advertising. See §2. Recorded as `IS_COMMERCIAL_PRODUCT` and enforced by test.
 
 ---
 
-## 11. Recommendation
+## 11. Where the free text actually comes from
+
+Verified 20 September 2026 by fetching each source.
+
+Tier 1 texts are distributed as **bulk downloads**, not metered APIs. There is
+no key, no rate limit, no per-request call and no quota to design around. The
+text is ingested once into MongoDB and served from there, which is what
+AGENTS.md §24 already assumes.
+
+### Primary sources
+
+| Translation | Source | Format | Size |
+|---|---|---|---|
+| **BSB** | <https://berean.bible/downloads.htm> | USFM, **USJ (JSON)**, USX, TXT | — |
+| **WEB** | <https://ebible.org/Scriptures/engwebp_usfm.zip> | USFM (zip) | 2.9 MB |
+
+`engwebp` is the Protestant-canon edition. eBible.org publishes the same text
+in USFX, plain text, SQL and Sword formats from the same page.
+
+### Convenience source: helloao
+
+<https://bible.helloao.org> serves both translations as pre-parsed JSON with
+SHA256 hashes per translation. The API code is MIT; the texts carry their own
+licences, which for BSB and WEB are the public-domain terms in §4.
+
+```
+/api/available_translations.json     catalogue with hashes and verse counts
+/api/BSB/books.json                  66 books with chapter counts
+/api/BSB/complete.json               entire Bible, 8.1 MB
+/api/BSB/ROM/8.json                  one chapter
+```
+
+Verse structure maps almost directly onto `Verse` in `@scrinode/types`:
+
+```json
+{ "type": "verse", "number": 28, "content": ["And we know that God works…"] }
+```
+
+**Verified against the existing registry:**
+
+- All 66 book IDs match `packages/scripture/src/books.ts` exactly — `GEN`,
+  `EXO` … `JUD`, `REV`. No mapping layer is needed.
+- Chapter counts match for all 66 books.
+
+### Two things to carry into ingestion
+
+**Versification differs between translations.** BSB reports 31,086 verses and
+WEB 31,103 across the same 1,189 chapters. This is exactly why `books.ts`
+stores chapter counts but refuses to store per-chapter verse counts. Verse
+counts must come from the imported text, per translation, never from a shared
+table.
+
+**Prefer the publisher for the canonical import.** helloao is convenient and
+its hashes make verification easy, but it is a third party. The provenance
+recorded under §21 should name where the bytes actually came from, and a
+re-import from the publisher must be possible without depending on anyone's
+mirror staying up.
+
+---
+
+## 12. Recommendation
 
 **Ship BSB and WEB at MVP.** Both are public domain with no obligations, both
 publish machine-readable text, and together they give one contemporary
