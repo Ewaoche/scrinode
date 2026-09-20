@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fromBuffer } from 'yauzl';
 import { getAnyBook } from '@scrinode/scripture';
+import { loadDotEnv } from './env.js';
 import {
   BIBLE_SOURCES,
   archiveUrl,
@@ -61,6 +62,10 @@ import {
  * Credentials come from the environment and are never written to the staging
  * tree, logged, or committed.
  */
+
+// Before anything reads configuration. The CLI is documented as runnable
+// directly, so it must find .env itself rather than depending on a wrapper.
+const DOTENV_PATH = loadDotEnv(process.cwd());
 
 const STAGING = process.env.INGEST_DIR ?? '.ingest';
 
@@ -684,7 +689,11 @@ async function unitsStage(sources: readonly BibleSource[], registeredOnly: boole
  * interrupted run resumes by being re-run. Nothing whose text and model are
  * unchanged is embedded twice — this costs money per token.
  */
-async function embedStage(limit: number | undefined, force: boolean): Promise<void> {
+async function embedStage(
+  limit: number | undefined,
+  force: boolean,
+  batchSize: number,
+): Promise<void> {
   const uri = process.env.MONGODB_URI;
   if (!uri) fail('Embedding needs MONGODB_URI in the environment.');
 
@@ -718,7 +727,7 @@ async function embedStage(limit: number | undefined, force: boolean): Promise<vo
 
     const target = limit ? Math.min(limit, outstanding) : outstanding;
     log(`Embedding ${target} of ${outstanding} unit(s) with ${EMBEDDING_MODEL}`);
-    log(`Batch size ${EMBED_BATCH_SIZE}, ${EMBEDDING_DIMENSIONS} dimensions`);
+    log(`Batch size ${batchSize}, ${EMBEDDING_DIMENSIONS} dimensions`);
 
     let embedded = 0;
     let tokens = 0;
@@ -728,7 +737,7 @@ async function embedStage(limit: number | undefined, force: boolean): Promise<vo
       const remaining = target - embedded;
       const batch = await units
         .find(pending)
-        .limit(Math.min(EMBED_BATCH_SIZE, remaining))
+        .limit(Math.min(batchSize, remaining))
         .toArray();
 
       if (batch.length === 0) break;
@@ -749,7 +758,12 @@ async function embedStage(limit: number | undefined, force: boolean): Promise<vo
         // Everything stored is a document. A question at query time uses
         // 'query', which Voyage instructs differently.
         'document',
-        { apiKey },
+        {
+          apiKey,
+          // A long rate-limit wait must look like waiting, not hanging.
+          onRetry: ({ status, delayMs }) =>
+            log(`      ${status} from Voyage; waiting ${(delayMs / 1000).toFixed(0)}s`),
+        },
       );
 
       tokens += result.totalTokens;
@@ -962,6 +976,13 @@ function listStage(): void {
 
 async function main(): Promise<void> {
   const [command = '', ...rest] = process.argv.slice(2);
+
+  // Printed for any command that needs configuration, so a run picking up
+  // the wrong file — or none — is visible rather than surfacing later as a
+  // confusing "variable not set".
+  if (command && command !== 'list' && command !== 'help') {
+    log(DOTENV_PATH ? `Loaded ${DOTENV_PATH}` : 'No .env found; using the ambient environment.');
+  }
   const force = rest.includes('--force');
   const all = rest.includes('--all');
   const sources = selectSources(rest);
@@ -976,9 +997,19 @@ async function main(): Promise<void> {
     case 'units':
       return unitsStage(sources, !all);
     case 'embed': {
-      const limitArg = rest.find((a) => a.startsWith('--limit='));
-      const parsed = limitArg ? Number.parseInt(limitArg.split('=')[1] ?? '', 10) : Number.NaN;
-      return embedStage(Number.isFinite(parsed) ? parsed : undefined, force);
+      const numeric = (flag: string): number => {
+        const found = rest.find((a) => a.startsWith(`${flag}=`));
+        return found ? Number.parseInt(found.split('=')[1] ?? '', 10) : Number.NaN;
+      };
+
+      const limitValue = numeric('--limit');
+      const batchValue = numeric('--batch');
+
+      return embedStage(
+        Number.isFinite(limitValue) ? limitValue : undefined,
+        force,
+        Number.isFinite(batchValue) ? batchValue : EMBED_BATCH_SIZE,
+      );
     }
     case 'fetch':
       return fetchStage(sources, force);
@@ -1002,7 +1033,7 @@ async function main(): Promise<void> {
           '  status [codes]       what has been uploaded and loaded, without doing it',
           '  vector-index         print the vector index definition  (--create applies it)',
           '  units [codes]        build retrieval units from loaded verses  (--all)',
-          '  embed                embed units that need it  (--limit=N, --force)',
+          '  embed                embed units that need it  (--limit=N, --batch=N, --force)',
           '  fetch [codes]        download publisher archives   (--force re-downloads)',
           '  parse [codes]        USFM to verse JSON + manifests',
           '  upload [codes]       staging tree to DigitalOcean Spaces  (--force re-uploads)',

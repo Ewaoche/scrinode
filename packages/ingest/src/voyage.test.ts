@@ -1,5 +1,11 @@
-import { describe, expect, it, vi } from 'vitest';
-import { EMBED_BATCH_SIZE, VoyageError, batched, embedBatch } from './voyage.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  EMBED_BATCH_SIZE,
+  RATE_LIMIT_BACKOFF_MS,
+  VoyageError,
+  batched,
+  embedBatch,
+} from './voyage.js';
 import { EMBEDDING_DIMENSIONS } from './retrieval.js';
 
 /** A well-formed response for `count` texts. */
@@ -119,13 +125,108 @@ describe('dimension validation', () => {
 });
 
 describe('retries', () => {
+  /**
+   * A rate limit now waits twenty seconds, which is correct against the API
+   * and far too long for a test suite. Fake timers let the wait be asserted
+   * without anyone sitting through it.
+   */
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** Run a call to completion, advancing timers past every backoff. */
+  const settle = async <T,>(promise: Promise<T>): Promise<T> => {
+    const result = promise.then(
+      (value) => ({ ok: true as const, value }),
+      (error: unknown) => ({ ok: false as const, error }),
+    );
+
+    // Each advance releases one pending sleep; five covers the attempt
+    // budget with room to spare.
+    for (let i = 0; i < 8; i += 1) {
+      await vi.advanceTimersByTimeAsync(60_000);
+    }
+
+    const settled = await result;
+    if (settled.ok) return settled.value;
+    throw settled.error;
+  };
+
+  it('waits long enough for a per-minute rate limit to clear', async () => {
+    // A free Voyage account is capped at 3 requests and 10K tokens per
+    // minute. A sub-second backoff guarantees another 429 and burns the
+    // attempt budget without ever leaving the window.
+    const waits: number[] = [];
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('rate limited', { status: 429 }))
+      .mockResolvedValueOnce(ok(1));
+
+    await settle(
+      embedBatch(['a'], 'document', {
+        apiKey: 'k',
+        fetchImpl: fetchImpl as never,
+        maxAttempts: 3,
+        onRetry: ({ delayMs }) => waits.push(delayMs),
+      }),
+    );
+
+    expect(waits[0]).toBeGreaterThanOrEqual(RATE_LIMIT_BACKOFF_MS);
+  });
+
+  it('honours Retry-After when the API sends one', async () => {
+    const waits: number[] = [];
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response('slow down', { status: 429, headers: { 'retry-after': '2' } }),
+      )
+      .mockResolvedValueOnce(ok(1));
+
+    await settle(
+      embedBatch(['a'], 'document', {
+        apiKey: 'k',
+        fetchImpl: fetchImpl as never,
+        maxAttempts: 3,
+        onRetry: ({ delayMs }) => waits.push(delayMs),
+      }),
+    );
+
+    expect(waits[0]).toBe(2000);
+  });
+
+  it('keeps server faults on a short backoff', async () => {
+    // A 5xx is usually transient and carries no per-minute window, so it
+    // should not wait as long as a rate limit.
+    const waits: number[] = [];
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('oops', { status: 503 }))
+      .mockResolvedValueOnce(ok(1));
+
+    await settle(
+      embedBatch(['a'], 'document', {
+        apiKey: 'k',
+        fetchImpl: fetchImpl as never,
+        maxAttempts: 3,
+        onRetry: ({ delayMs }) => waits.push(delayMs),
+      }),
+    );
+
+    expect(waits[0]).toBeLessThan(RATE_LIMIT_BACKOFF_MS);
+  });
+
   it('retries a rate limit and succeeds', async () => {
     const fetchImpl = vi
       .fn()
       .mockResolvedValueOnce(new Response('slow down', { status: 429 }))
       .mockResolvedValueOnce(ok(1));
 
-    const result = await embedBatch(['a'], 'document', options(fetchImpl as never));
+    const result = await settle(embedBatch(['a'], 'document', options(fetchImpl as never)));
 
     expect(result.embeddings).toHaveLength(1);
     expect(fetchImpl).toHaveBeenCalledTimes(2);
@@ -137,7 +238,7 @@ describe('retries', () => {
       .mockResolvedValueOnce(new Response('bad gateway', { status: 502 }))
       .mockResolvedValueOnce(ok(1));
 
-    await embedBatch(['a'], 'document', options(fetchImpl as never));
+    await settle(embedBatch(['a'], 'document', options(fetchImpl as never)));
     expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
@@ -145,16 +246,16 @@ describe('retries', () => {
     // Repeating a 401 wastes time and hides the real problem.
     const fetchImpl = vi.fn(async () => new Response('unauthorized', { status: 401 }));
 
-    await expect(
-      embedBatch(['a'], 'document', options(fetchImpl as never)),
-    ).rejects.toThrow(VoyageError);
+    await expect(settle(embedBatch(['a'], 'document', options(fetchImpl as never)))).rejects.toThrow(
+      VoyageError,
+    );
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
   it('does not retry a malformed request', async () => {
     const fetchImpl = vi.fn(async () => new Response('bad request', { status: 400 }));
 
-    await expect(embedBatch(['a'], 'document', options(fetchImpl as never))).rejects.toThrow();
+    await expect(settle(embedBatch(['a'], 'document', options(fetchImpl as never)))).rejects.toThrow();
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
@@ -162,7 +263,7 @@ describe('retries', () => {
     const fetchImpl = vi.fn(async () => new Response('busy', { status: 429 }));
 
     await expect(
-      embedBatch(['a'], 'document', options(fetchImpl as never, 2)),
+      settle(embedBatch(['a'], 'document', options(fetchImpl as never, 2))),
     ).rejects.toThrow(/429/);
     expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
@@ -173,7 +274,7 @@ describe('retries', () => {
       .mockRejectedValueOnce(new Error('ECONNRESET'))
       .mockResolvedValueOnce(ok(1));
 
-    await embedBatch(['a'], 'document', options(fetchImpl as never));
+    await settle(embedBatch(['a'], 'document', options(fetchImpl as never)));
     expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 });

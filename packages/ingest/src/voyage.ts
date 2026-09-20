@@ -26,6 +26,15 @@ const ENDPOINT = 'https://api.voyageai.com/v1/embeddings';
 export const EMBED_BATCH_SIZE = 128;
 
 /**
+ * Base wait after a rate limit, in milliseconds.
+ *
+ * Voyage's tightest documented window is per minute, so waiting in
+ * twenty-second steps clears it within the attempt budget rather than
+ * retrying inside the same window.
+ */
+export const RATE_LIMIT_BACKOFF_MS = 20_000;
+
+/**
  * Whether the text being embedded is a stored document or a search query.
  *
  * Voyage prepends a different instruction for each, and mismatching them
@@ -60,6 +69,8 @@ export interface VoyageOptions {
   readonly apiKey: string;
   readonly model?: string;
   readonly maxAttempts?: number;
+  /** Called before each retry, so a long wait is visible rather than a hang. */
+  readonly onRetry?: (info: { attempt: number; status: number; delayMs: number }) => void;
   /** Injected in tests so retry behaviour can be exercised without network. */
   readonly fetchImpl?: typeof fetch;
 }
@@ -85,6 +96,7 @@ export async function embedBatch(
   const model = options.model ?? EMBEDDING_MODEL;
   const maxAttempts = options.maxAttempts ?? 5;
   const doFetch = options.fetchImpl ?? fetch;
+  const onRetry = options.onRetry;
 
   let lastError: Error | undefined;
 
@@ -152,9 +164,24 @@ export async function embedBatch(
 
     if (!isRetryable(response.status) || attempt === maxAttempts) break;
 
-    // Exponential backoff. Voyage does not document a Retry-After header, so
-    // this does not read one.
-    await sleep(2 ** attempt * 500);
+    // A rate limit needs a wait measured against the limit's window, not a
+    // generic backoff. An account without a payment method is capped at 3
+    // requests and 10K tokens per minute, so a few hundred milliseconds
+    // guarantees another 429 and burns the attempt budget for nothing.
+    //
+    // Retry-After is honoured when present; otherwise a rate limit waits in
+    // multiples of twenty seconds, which clears the tightest documented
+    // per-minute window within the attempt budget.
+    const retryAfter = Number.parseInt(response.headers.get('retry-after') ?? '', 10);
+
+    const delay = Number.isFinite(retryAfter)
+      ? retryAfter * 1000
+      : response.status === 429
+        ? attempt * RATE_LIMIT_BACKOFF_MS
+        : 2 ** attempt * 500;
+
+    onRetry?.({ attempt, status: response.status, delayMs: delay });
+    await sleep(delay);
   }
 
   throw lastError ?? new VoyageError('Voyage request failed');
