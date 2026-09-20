@@ -112,15 +112,18 @@ export const RETRIEVAL_COLLECTION = 'retrieval_units';
 /**
  * The embedding model.
  *
- * voyage-3 is MongoDB's own recommendation for Atlas Vector Search and is
- * fixed at 1024 dimensions — it does not support Matryoshka reduction, so
- * the number here IS the index's `numDimensions` and cannot be changed
- * without rebuilding every vector.
+ * voyage-4 is Voyage's current general-purpose model; their docs call the
+ * previous generation strictly worse "in all aspects". It defaults to 1024
+ * dimensions, which is the number the Atlas index declares — changing it
+ * later means dropping the index and re-embedding every document.
+ *
+ * voyage-4 also supports 256, 512 and 2048 if the index ever needs to shrink,
+ * which voyage-3 did not.
  *
  * Recorded on each document as `embeddingModel` so a future migration can
  * find and re-embed only what an older model produced.
  */
-export const EMBEDDING_MODEL = 'voyage-3';
+export const EMBEDDING_MODEL = 'voyage-4';
 export const EMBEDDING_DIMENSIONS = 1024;
 
 /**

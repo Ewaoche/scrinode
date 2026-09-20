@@ -73,3 +73,20 @@ export {
   type RetrievalUnit,
   type RetrievalUnitType,
 } from './retrieval.js';
+
+export {
+  buildChapterUnits,
+  needsEmbedding,
+  textHash,
+  type VerseInput,
+} from './units.js';
+
+export {
+  EMBED_BATCH_SIZE,
+  VoyageError,
+  batched,
+  embedBatch,
+  type EmbeddingResult,
+  type InputType,
+  type VoyageOptions,
+} from './voyage.js';

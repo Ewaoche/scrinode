@@ -10,11 +10,11 @@ import {
 } from './retrieval.js';
 
 describe('embedding model', () => {
-  it('pins the dimensions voyage-3 actually produces', () => {
-    // voyage-3 is fixed at 1024 and does not support Matryoshka reduction.
-    // A mismatch here is not a test failure but a silent index that rejects
+  it('pins the dimensions the model actually produces', () => {
+    // voyage-4 defaults to 1024. A mismatch between this and the index's
+    // numDimensions is not a test failure but an index that silently rejects
     // every insert.
-    expect(EMBEDDING_MODEL).toBe('voyage-3');
+    expect(EMBEDDING_MODEL).toBe('voyage-4');
     expect(EMBEDDING_DIMENSIONS).toBe(1024);
   });
 });

@@ -7,6 +7,7 @@
   "engines": {
     "node": ">=22.0.0"
   },
+  "//verify": "Concurrency is capped at 4 deliberately. Four packages spawn jsdom or heavy worker pools, and Turborepo's default of 10 oversubscribes the CPU badly enough that a Vitest worker misses its 60-second startup handshake and fails the run. That timeout is a hardcoded constant in Vitest and cannot be raised. GitHub runners have 2 cores and are more exposed than any developer machine, so the cap lives here rather than only in CI.",
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev",
@@ -14,7 +15,7 @@
     "test": "turbo run test",
     "test:e2e": "turbo run test:e2e",
     "typecheck": "turbo run typecheck",
-    "verify": "turbo run build lint typecheck test",
+    "verify": "turbo run build lint typecheck test --concurrency=4",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md}\""
   },

@@ -23,12 +23,16 @@ import {
 import { latestPointerPath, releasePaths, type Manifest } from './layout.js';
 import { COLLECTIONS, VERSE_INDEXES, type VerseDocument } from './documents.js';
 import {
+  DERIVABLE_UNIT_TYPES,
   EMBEDDING_DIMENSIONS,
   EMBEDDING_MODEL,
   RETRIEVAL_COLLECTION,
   VECTOR_INDEX_NAME,
   vectorIndexDefinition,
+  type RetrievalUnit,
 } from './retrieval.js';
+import { buildChapterUnits, needsEmbedding, type VerseInput } from './units.js';
+import { EMBED_BATCH_SIZE, embedBatch } from './voyage.js';
 import {
   LEDGER_COLLECTION,
   isUpToDate,
@@ -577,6 +581,224 @@ ${loaded} loaded, ${skipped} already current.`);
 }
 
 /**
+ * Build retrieval units from loaded verses.
+ *
+ * Reads from MongoDB rather than the staging tree: units are derived from
+ * what is actually being served, so a unit can never describe text the
+ * reader does not have.
+ *
+ * Units carry no vectors. Embedding is a separate stage because it costs
+ * money, fails on its own terms, and must not repeat for a unit whose text
+ * has not changed.
+ */
+async function unitsStage(sources: readonly BibleSource[], registeredOnly: boolean): Promise<void> {
+  const uri = process.env.MONGODB_URI;
+  if (!uri) fail('Building units needs MONGODB_URI in the environment.');
+
+  const { MongoClient } = await import('mongodb');
+  const client = new MongoClient(uri);
+
+  try {
+    await client.connect();
+    const db = client.db(process.env.MONGODB_DB ?? 'scrinode');
+    const verses = db.collection<VerseInput & { translation: string }>(COLLECTIONS.verses);
+    const units = db.collection<RetrievalUnit>(RETRIEVAL_COLLECTION);
+
+    // Finding unembedded work must not scan the collection.
+    await units.createIndex({ embeddingModel: 1, unitType: 1 }, { name: 'model_type' });
+    await units.createIndex({ translation: 1, unitType: 1 }, { name: 'translation_type' });
+
+    const selected = registeredOnly ? sources.filter((s) => s.registered) : sources;
+    log(`Building retrieval units for ${selected.length} translation(s)`);
+    log(`Types: ${DERIVABLE_UNIT_TYPES.join(', ')}`);
+
+    for (const source of selected) {
+      const code = source.code.toUpperCase();
+      const loaded = await verses.countDocuments({ translation: code });
+
+      if (loaded === 0) {
+        log(`  ${source.code.padEnd(10)} SKIP (no verses loaded)`);
+        continue;
+      }
+
+      const books = (await verses.distinct('bookId', { translation: code })).sort();
+      let written = 0;
+
+      for (const bookId of books) {
+        const bookVerses = await verses
+          .find({ translation: code, bookId })
+          .sort({ ordinal: 1 })
+          .toArray();
+
+        const byChapter = new Map<number, VerseInput[]>();
+        for (const verse of bookVerses) {
+          const list = byChapter.get(verse.chapter) ?? [];
+          list.push(verse);
+          byChapter.set(verse.chapter, list);
+        }
+
+        const batch: RetrievalUnit[] = [];
+
+        for (const chapterVerses of byChapter.values()) {
+          const canon = (chapterVerses[0]?.canon ?? 'protestant') as NonNullable<
+            RetrievalUnit['canon']
+          >;
+          batch.push(
+            ...buildChapterUnits(chapterVerses, {
+              translation: code,
+              release: source.release,
+              canon,
+              sourceId: `ebible:${source.ebibleId}`,
+            }),
+          );
+        }
+
+        if (batch.length === 0) continue;
+
+        // $set leaves unnamed fields alone, so rebuilding units after an
+        // embedding run keeps their vectors.
+        await units.bulkWrite(
+          batch.map((unit) => ({
+            updateOne: { filter: { _id: unit._id }, update: { $set: unit }, upsert: true },
+          })),
+          { ordered: false },
+        );
+
+        written += batch.length;
+      }
+
+      log(`  ${source.code.padEnd(10)} ${String(written).padStart(7)} units from ${loaded} verses`);
+    }
+
+    const total = await units.countDocuments();
+    log(`\n${total} retrieval units in ${RETRIEVAL_COLLECTION}.`);
+  } finally {
+    await client.close();
+  }
+}
+
+/**
+ * Embed retrieval units that need it.
+ *
+ * Work is found by querying for units without a current vector, so an
+ * interrupted run resumes by being re-run. Nothing whose text and model are
+ * unchanged is embedded twice — this costs money per token.
+ */
+async function embedStage(limit: number | undefined, force: boolean): Promise<void> {
+  const uri = process.env.MONGODB_URI;
+  if (!uri) fail('Embedding needs MONGODB_URI in the environment.');
+
+  const apiKey = process.env.VOYAGE_API_KEY;
+  if (!apiKey) {
+    fail(
+      'Embedding needs VOYAGE_API_KEY in the environment.\n' +
+        'Get one at https://dashboard.voyageai.com/organization/api-keys',
+    );
+  }
+
+  const { MongoClient } = await import('mongodb');
+  const client = new MongoClient(uri);
+
+  try {
+    await client.connect();
+    const db = client.db(process.env.MONGODB_DB ?? 'scrinode');
+    const units = db.collection<RetrievalUnit>(RETRIEVAL_COLLECTION);
+
+    const pending = force
+      ? {}
+      : {
+          $or: [{ embedding: { $exists: false } }, { embeddingModel: { $ne: EMBEDDING_MODEL } }],
+        };
+
+    const outstanding = await units.countDocuments(pending);
+    if (outstanding === 0) {
+      log('Nothing to embed. Every unit has a current vector.');
+      return;
+    }
+
+    const target = limit ? Math.min(limit, outstanding) : outstanding;
+    log(`Embedding ${target} of ${outstanding} unit(s) with ${EMBEDDING_MODEL}`);
+    log(`Batch size ${EMBED_BATCH_SIZE}, ${EMBEDDING_DIMENSIONS} dimensions`);
+
+    let embedded = 0;
+    let tokens = 0;
+    const startedAt = Date.now();
+
+    while (embedded < target) {
+      const remaining = target - embedded;
+      const batch = await units
+        .find(pending)
+        .limit(Math.min(EMBED_BATCH_SIZE, remaining))
+        .toArray();
+
+      if (batch.length === 0) break;
+
+      // The Mongo query finds units with no vector or an old model, but it
+      // cannot compare a text hash. A unit whose text changed under an
+      // existing vector is caught here instead, and skipping it silently
+      // would leave a stale embedding serving current text.
+      const stale = batch.filter((unit) => force || needsEmbedding(unit, EMBEDDING_MODEL));
+
+      if (stale.length === 0) {
+        log(`  ${batch.length} unit(s) already current, nothing to do`);
+        break;
+      }
+
+      const result = await embedBatch(
+        stale.map((unit) => unit.text),
+        // Everything stored is a document. A question at query time uses
+        // 'query', which Voyage instructs differently.
+        'document',
+        { apiKey },
+      );
+
+      tokens += result.totalTokens;
+
+      const writes = stale.flatMap((unit, i) => {
+        const embedding = result.embeddings[i];
+        // embedBatch already checks the count and dimensions, so a gap here
+        // would be a logic error rather than a bad response. Skipping beats
+        // writing an empty vector the index would silently reject.
+        if (!embedding) return [];
+
+        return [
+          {
+            updateOne: {
+              filter: { _id: unit._id },
+              update: {
+                $set: {
+                  embedding,
+                  embeddingModel: EMBEDDING_MODEL,
+                  embeddedAt: new Date(),
+                },
+              },
+            },
+          },
+        ];
+      });
+
+      await units.bulkWrite(writes, { ordered: false });
+
+      embedded += stale.length;
+
+      const rate = embedded / Math.max(1, (Date.now() - startedAt) / 1000);
+      log(
+        `  ${String(embedded).padStart(7)} / ${target}  ` +
+          `${tokens.toLocaleString()} tokens  ${rate.toFixed(0)}/s`,
+      );
+    }
+
+    log(`\nEmbedded ${embedded} unit(s), ${tokens.toLocaleString()} tokens.`);
+
+    const withVectors = await units.countDocuments({ embeddingModel: EMBEDDING_MODEL });
+    const total = await units.countDocuments();
+    log(`${withVectors} of ${total} units now carry a ${EMBEDDING_MODEL} vector.`);
+  } finally {
+    await client.close();
+  }
+}
+
+/**
  * Report what each stage has done, without doing any of it.
  *
  * The scripts call this to show state before and after a run, so an operator
@@ -679,6 +901,13 @@ async function main(): Promise<void> {
       return statusStage(sources);
     case 'vector-index':
       return vectorIndexCommand();
+    case 'units':
+      return unitsStage(sources, !all);
+    case 'embed': {
+      const limitArg = rest.find((a) => a.startsWith('--limit='));
+      const parsed = limitArg ? Number.parseInt(limitArg.split('=')[1] ?? '', 10) : Number.NaN;
+      return embedStage(Number.isFinite(parsed) ? parsed : undefined, force);
+    }
     case 'fetch':
       return fetchStage(sources, force);
     case 'parse':
@@ -700,6 +929,8 @@ async function main(): Promise<void> {
           '  list                 show every source and whether it is registered',
           '  status [codes]       what has been uploaded and loaded, without doing it',
           '  vector-index         print the Atlas Vector Search index definition',
+          '  units [codes]        build retrieval units from loaded verses  (--all)',
+          '  embed                embed units that need it  (--limit=N, --force)',
           '  fetch [codes]        download publisher archives   (--force re-downloads)',
           '  parse [codes]        USFM to verse JSON + manifests',
           '  upload [codes]       staging tree to DigitalOcean Spaces  (--force re-uploads)',
@@ -717,6 +948,7 @@ async function main(): Promise<void> {
           '  DO_SPACES_SECRET     secret key',
           '  MONGODB_URI          connection string',
           '  MONGODB_DB           database name (default scrinode)',
+          '  VOYAGE_API_KEY       embeddings key, for the embed stage',
         ].join('\n'),
       );
   }
