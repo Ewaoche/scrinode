@@ -90,3 +90,12 @@ export {
   type InputType,
   type VoyageOptions,
 } from './voyage.js';
+
+export {
+  formatRange,
+  searchUnits,
+  type SearchHit,
+  type SearchOptions,
+} from './search.js';
+
+export { loadDotEnv, parseDotEnv, findDotEnv } from './env.js';

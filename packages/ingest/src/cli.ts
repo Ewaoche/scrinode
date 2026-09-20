@@ -34,6 +34,7 @@ import {
 } from './retrieval.js';
 import { buildChapterUnits, needsEmbedding, type VerseInput } from './units.js';
 import { EMBED_BATCH_SIZE, embedBatch } from './voyage.js';
+import { formatRange, searchUnits } from './search.js';
 import {
   LEDGER_COLLECTION,
   isUpToDate,
@@ -865,6 +866,72 @@ ${staged} staged, ${uploaded} uploaded, ${loaded} loaded.`);
 }
 
 /**
+ * Search retrieval units from the command line.
+ *
+ * Exists so retrieval quality can be checked without booting the API or
+ * writing a throwaway script. A retrieval change that is awkward to test
+ * will not be tested.
+ */
+async function searchStage(args: readonly string[]): Promise<void> {
+  const question = args.filter((a) => !a.startsWith('--')).join(' ').trim();
+
+  if (!question) {
+    fail('Usage: search "your question" [--translation=BSB] [--type=passage] [--limit=5]');
+  }
+
+  const uri = process.env.MONGODB_URI;
+  if (!uri) fail('Search needs MONGODB_URI in the environment.');
+
+  const apiKey = process.env.VOYAGE_API_KEY;
+  if (!apiKey) fail('Search needs VOYAGE_API_KEY to embed the question.');
+
+  const flag = (name: string): string | undefined =>
+    args.find((a) => a.startsWith(`--${name}=`))?.split('=')[1];
+
+  const limitFlag = Number.parseInt(flag('limit') ?? '', 10);
+
+  const { MongoClient } = await import('mongodb');
+  const client = new MongoClient(uri);
+
+  try {
+    await client.connect();
+    const units = client
+      .db(process.env.MONGODB_DB ?? 'scrinode')
+      .collection<RetrievalUnit>(RETRIEVAL_COLLECTION);
+
+    const embedded = await units.countDocuments({ embeddingModel: EMBEDDING_MODEL });
+    if (embedded === 0) {
+      fail('No units carry a vector yet. Run the embed stage first.');
+    }
+
+    const hits = await searchUnits(units, question, {
+      apiKey,
+      ...(flag('translation') ? { translation: flag('translation') as string } : {}),
+      ...(flag('type') ? { unitType: flag('type') as RetrievalUnit['unitType'] } : {}),
+      ...(flag('book') ? { bookId: flag('book') as string } : {}),
+      ...(Number.isFinite(limitFlag) ? { limit: limitFlag } : {}),
+    });
+
+    log(`"${question}"`);
+    log(`${embedded.toLocaleString()} units searchable\n`);
+
+    if (hits.length === 0) {
+      log('No results. Try widening the filters, or embed more units.');
+      return;
+    }
+
+    for (const hit of hits) {
+      const reference = formatRange(hit) || hit._id;
+      log(`  ${hit.score.toFixed(3)}  ${reference}  [${hit.unitType}]`);
+      log(`         ${hit.text.slice(0, 160)}${hit.text.length > 160 ? '...' : ''}`);
+      log('');
+    }
+  } finally {
+    await client.close();
+  }
+}
+
+/**
  * Show, or create, the Atlas Vector Search index.
  *
  * The driver can create vector indexes directly, so `--create` avoids
@@ -994,6 +1061,8 @@ async function main(): Promise<void> {
       return statusStage(sources);
     case 'vector-index':
       return vectorIndexCommand(rest.includes('--create'));
+    case 'search':
+      return searchStage(rest);
     case 'units':
       return unitsStage(sources, !all);
     case 'embed': {
@@ -1034,6 +1103,7 @@ async function main(): Promise<void> {
           '  vector-index         print the vector index definition  (--create applies it)',
           '  units [codes]        build retrieval units from loaded verses  (--all)',
           '  embed                embed units that need it  (--limit=N, --batch=N, --force)',
+          '  search "question"    vector search  (--translation=, --type=, --book=, --limit=)',
           '  fetch [codes]        download publisher archives   (--force re-downloads)',
           '  parse [codes]        USFM to verse JSON + manifests',
           '  upload [codes]       staging tree to DigitalOcean Spaces  (--force re-uploads)',
