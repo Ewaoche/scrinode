@@ -851,14 +851,86 @@ ${staged} staged, ${uploaded} uploaded, ${loaded} loaded.`);
 }
 
 /**
- * Print the Atlas Vector Search index definition.
+ * Show, or create, the Atlas Vector Search index.
  *
- * Atlas creates vector indexes through its own UI or Admin API rather than
- * through the driver, so this emits the exact JSON to paste, generated from
- * the same constants the embedder uses. Writing it by hand would let the
- * dimensions drift from the model.
+ * The driver can create vector indexes directly, so `--create` avoids
+ * copying JSON into the Atlas UI and the transcription errors that invites.
+ * Without it the definition is printed, which is still useful for review and
+ * for anyone working through the UI.
+ *
+ * Either way the definition comes from the same constants the embedder uses,
+ * so `numDimensions` cannot drift from the model.
  */
-function vectorIndexCommand(): void {
+async function vectorIndexCommand(create: boolean): Promise<void> {
+  const definition = vectorIndexDefinition();
+
+  if (!create) {
+    printVectorIndex(definition);
+    return;
+  }
+
+  const uri = process.env.MONGODB_URI;
+  if (!uri) fail('Creating the index needs MONGODB_URI in the environment.');
+
+  const { MongoClient } = await import('mongodb');
+  const client = new MongoClient(uri);
+
+  try {
+    await client.connect();
+    const collection = client
+      .db(process.env.MONGODB_DB ?? 'scrinode')
+      .collection(RETRIEVAL_COLLECTION);
+
+    // The driver types this loosely; these are the fields Atlas returns and
+    // the only ones read here.
+    type SearchIndexInfo = { name: string; status?: string; queryable?: boolean };
+
+    const listIndexes = async (): Promise<SearchIndexInfo[]> =>
+      (await collection.listSearchIndexes().toArray()) as SearchIndexInfo[];
+
+    const existing = await listIndexes();
+    const already = existing.find((index) => index.name === VECTOR_INDEX_NAME);
+
+    if (already) {
+      log(`${VECTOR_INDEX_NAME} already exists (${already.status ?? 'unknown'}).`);
+      log('Atlas does not allow changing numDimensions in place. To change it,');
+      log('drop the index in the Atlas UI and re-run this command.');
+      return;
+    }
+
+    await collection.createSearchIndex({
+      name: VECTOR_INDEX_NAME,
+      type: 'vectorSearch',
+      definition,
+    });
+
+    log(`Created ${VECTOR_INDEX_NAME} on ${RETRIEVAL_COLLECTION}.`);
+
+    // Atlas builds asynchronously; a PENDING index answers no queries, so
+    // waiting here means the next stage can rely on it.
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      const [index] = await listIndexes();
+      if (!index) break;
+
+      if (index.status === 'READY') {
+        log(`Status READY, queryable.`);
+        return;
+      }
+
+      if (index.status === 'FAILED') {
+        fail(`Atlas reported the index build FAILED: ${JSON.stringify(index)}`);
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+    }
+
+    log('Still building. Check the Atlas UI; it will become queryable shortly.');
+  } finally {
+    await client.close();
+  }
+}
+
+function printVectorIndex(definition: object): void {
   log('Atlas Vector Search index');
   log('');
   log(`  database    ${process.env.MONGODB_DB ?? 'scrinode'}`);
@@ -868,7 +940,7 @@ function vectorIndexCommand(): void {
   log('');
   log('Atlas UI: Atlas Search -> Create Search Index -> Vector Search -> JSON Editor');
   log('');
-  log(JSON.stringify(vectorIndexDefinition(), null, 2));
+  log(JSON.stringify(definition, null, 2));
   log('');
   log('numDimensions must match the model exactly. Changing it later requires');
   log('dropping the index and re-embedding every document.');
@@ -900,7 +972,7 @@ async function main(): Promise<void> {
     case 'status':
       return statusStage(sources);
     case 'vector-index':
-      return vectorIndexCommand();
+      return vectorIndexCommand(rest.includes('--create'));
     case 'units':
       return unitsStage(sources, !all);
     case 'embed': {
@@ -928,7 +1000,7 @@ async function main(): Promise<void> {
           'Commands:',
           '  list                 show every source and whether it is registered',
           '  status [codes]       what has been uploaded and loaded, without doing it',
-          '  vector-index         print the Atlas Vector Search index definition',
+          '  vector-index         print the vector index definition  (--create applies it)',
           '  units [codes]        build retrieval units from loaded verses  (--all)',
           '  embed                embed units that need it  (--limit=N, --force)',
           '  fetch [codes]        download publisher archives   (--force re-downloads)',
