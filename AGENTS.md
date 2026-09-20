@@ -929,6 +929,12 @@ behind every entry are in `docs/TRANSLATION_LICENSING.md`.
 neither is a permissive licence whose obligations are unimplemented. Never
 serve, ingest or cache a translation's text without it.
 
+**Scrinode is a commercial product.** Paid subscription plans, no advertising.
+Every publisher treats a subscription as commercial use, so no non-commercial
+grant may ever be served — this rules out the free ESV API, API.Bible's free
+tier, the NET's gratis licence and Bible Brain. The premise is recorded as
+`IS_COMMERCIAL_PRODUCT` and enforced by test.
+
 Rules that are not negotiable:
 
 - A translation absent from the registry fails closed. Never add an entry to

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  IS_COMMERCIAL_PRODUCT,
   TRANSLATIONS,
   availableTranslations,
   getTranslation,
@@ -76,6 +77,22 @@ describe('availability invariants', () => {
     for (const translation of TRANSLATIONS) {
       if (translation.licence.redistribution === 'full-non-commercial') {
         expect(translation.status, translation.code).not.toBe('available');
+      }
+    }
+  });
+
+  /**
+   * Scrinode sells subscriptions, so no non-commercial grant can ever be
+   * served. This is the premise behind the commercialUse assertion above,
+   * stated explicitly so that changing it requires changing a test.
+   */
+  it('holds the commercial premise that governs every licence decision', () => {
+    expect(IS_COMMERCIAL_PRODUCT).toBe(true);
+
+    if (IS_COMMERCIAL_PRODUCT) {
+      for (const translation of availableTranslations()) {
+        expect(translation.licence.commercialUse, translation.code).not.toBe('prohibited');
+        expect(translation.licence.commercialUse, translation.code).not.toBe('not-stated');
       }
     }
   });

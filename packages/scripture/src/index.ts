@@ -7,6 +7,7 @@
 export { BOOKS, getBook, isValidBookId, type BookMeta } from './books.js';
 
 export {
+  IS_COMMERCIAL_PRODUCT,
   TRANSLATIONS,
   availableTranslations,
   getTranslation,

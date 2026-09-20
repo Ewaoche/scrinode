@@ -52,6 +52,22 @@ export interface TranslationMeta {
   readonly blockedReason?: string;
 }
 
+/**
+ * Scrinode is a commercial product.
+ *
+ * Confirmed by the product owner: no advertising, but paid subscription plans.
+ * Every publisher treats a subscription as commercial use, and several define
+ * it broadly enough that even donation prompts would qualify. This rules out
+ * every non-commercial grant — the free ESV API, API.Bible's free tier, the
+ * NET's gratis licence and Bible Brain all require the text to be given away.
+ *
+ * This constant exists so that premise is enforced rather than remembered:
+ * `translations.test.ts` asserts no translation marked available carries a
+ * non-commercial licence. If Scrinode ever ceased to be commercial, flipping
+ * this would be a deliberate act with visible consequences.
+ */
+export const IS_COMMERCIAL_PRODUCT = true;
+
 const code = (value: string): TranslationCode => value as TranslationCode;
 
 /**

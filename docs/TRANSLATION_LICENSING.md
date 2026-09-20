@@ -1,6 +1,6 @@
 # Translation Licensing Matrix
 
-**Status:** Researched and implemented — awaiting product-owner decisions (§9)
+**Status:** Researched and implemented — awaiting product-owner decisions (§10)
 **Author:** Claude (Opus 5)
 **Date:** 2026-09-20
 **Implements:** AGENTS.md §21 (Source Provenance), §22 (Translation Integrity), §42 (never invent licensing terms)
@@ -27,7 +27,35 @@ worse than no registry at all, because it reads as verified.
 
 ---
 
-## 2. The three tiers and what actually gates them
+## 2. The commercial premise
+
+**Scrinode sells subscriptions.** No advertising, but paid plans — confirmed by
+the product owner, 20 September 2026.
+
+Every publisher treats a subscription as commercial use, and several define it
+broadly enough that donations alone would qualify. This is the single fact that
+most constrains the matrix, so it is recorded in code as
+`IS_COMMERCIAL_PRODUCT` and enforced by test rather than left to memory.
+
+What it eliminates outright:
+
+| Route | Why it is unavailable |
+|---|---|
+| Free ESV API | Commercial = a site designed "to pay for a service" |
+| API.Bible free tier | *"No ads, fees, freemium models or upsells allowed"* |
+| NET gratis licence | Redistribution requires giving the text away |
+| Bible Brain (FCBH) | Requires providing content free of charge |
+
+What it does **not** affect: every public-domain text (BSB, WEB, OEB) and both
+CC BY-SA texts (LSV, FBV). Commercial use is explicitly permitted for all five.
+
+The practical consequence is that **every licensed version now costs money**.
+There is no free path to ESV, NIV, NASB, CSB, NKJV, NLT or NRSV. Tier 1 remains
+free and unaffected.
+
+---
+
+## 3. The three tiers and what actually gates them
 
 | Tier | Texts | Gate | Who clears it |
 |------|-------|------|---------------|
@@ -45,7 +73,7 @@ can be known to the system, correct in its terms, and still not servable.
 
 ---
 
-## 3. Tier 1 — Public domain
+## 4. Tier 1 — Public domain
 
 No fees, no caps, no attribution obligation, no negotiation. These can be
 ingested and served today.
@@ -110,7 +138,7 @@ permissive as any in this document.
 
 ---
 
-## 4. Tier 2 — Open licence, obligations attached
+## 5. Tier 2 — Open licence, obligations attached
 
 Free and commercially usable, but each carries conditions that must be
 implemented before the text may be served.
@@ -158,7 +186,7 @@ confirmed before offering it as a whole-Bible option.
 
 ---
 
-## 5. NET Bible — a specific warning ⛔ requires agreement
+## 6. NET Bible — a specific warning ⛔ requires agreement
 
 **The NET is not an open licence, despite its reputation.** It is frequently
 grouped with the free translations above. It does not belong there.
@@ -196,14 +224,14 @@ appear on the publisher's current page. Not encoded.
 
 ---
 
-## 6. Tier 3 — Licensed versions
+## 7. Tier 3 — Licensed versions
 
 None of these can ship without a signed agreement. The registry deliberately
 contains **no entry for any of them**: an unregistered code fails closed, so
 `isAvailable('NIV')` returns `false` today rather than depending on a status
 field being set correctly.
 
-### 6.1 The mistake to avoid: fair-use verse counts do not apply to us
+### 7.1 The mistake to avoid: fair-use verse counts do not apply to us
 
 Every publisher below states a fair-use quotation limit — 500 verses, 1,000
 verses, 25% of the work. **These do not authorise a Bible app.** They govern
@@ -220,7 +248,7 @@ The other publishers simply do not contemplate the use case. Treat the numbers
 in this section as context, never as a permission to build on. Planning to
 "stay under 500 verses" is not a licensing strategy.
 
-### 6.2 AI positions — decision-critical for Zedek
+### 7.2 AI positions — decision-critical for Zedek
 
 Two publishers have taken positions that bear on architecture, not just
 paperwork. Scrinode retrieves Scripture into model context (AGENTS.md §20), so
@@ -241,7 +269,7 @@ with Crossway before any plan assumes the ESV.**
 Lockman being the permissive outlier is genuinely surprising and makes the
 NASB the strongest licensed candidate for an AI-assisted product.
 
-### 6.3 Per-publisher summary
+### 7.3 Per-publisher summary
 
 | Version | Rights holder | Route | Fair-use limit (not applicable to apps) | Storage rule |
 |---|---|---|---|---|
@@ -265,7 +293,7 @@ gratis terms.
 No publisher in this tier publishes fees or approval timelines. That silence
 is itself the finding and should be budgeted as lead time.
 
-### 6.4 Aggregators
+### 7.4 Aggregators
 
 **API.Bible** (American Bible Society) is the pragmatic route to four of the
 seven — NASB, CSB, NKJV and NLT under one agreement. It does **not** carry ESV
@@ -295,7 +323,7 @@ and are entirely unverified. Given YouVersion holds the deepest licence
 portfolio in the industry, this is the largest open opportunity and worth a
 direct look.
 
-### 6.5 Verification debt
+### 7.5 Verification debt
 
 These could not be fetched from the publisher directly and rest on secondary
 sources. **Confirm exact notice wording before pasting any of it into a
@@ -313,7 +341,7 @@ sources render punctuation and registration marks inconsistently.
 
 ---
 
-## 7. The AI question nobody has answered
+## 8. The AI question nobody has answered
 
 **No publisher in Tiers 1 or 2 addresses AI training or retrieval-augmented
 generation.** Not one.
@@ -344,7 +372,7 @@ question to be answered deliberately rather than by omission.
 
 ---
 
-## 8. How the registry enforces this
+## 9. How the registry enforces this
 
 `packages/scripture/src/translations.ts` is the machine-readable matrix.
 Before it, `TranslationCode` was a branded type with nothing behind it — any
@@ -373,30 +401,30 @@ enforced by CI rather than a note someone may not read.
 
 ---
 
-## 9. Open questions for the product owner
+## 10. Open questions for the product owner
 
-1. **Monetisation model — answer this first.** It determines licence
-   eligibility more than any other decision. A paid tier, advertising *or* a
-   donation prompt each independently disqualify the NET, void the free ESV
-   API, and void API.Bible's free tier. "Free with donations" is not free by
-   any of these publishers' definitions.
-2. **Does Zedek retrieve licensed translation text?** If Scripture passed to a
+~~**Monetisation model.**~~ **Answered 20 September 2026:** subscriptions, no
+advertising. See §2. Recorded as `IS_COMMERCIAL_PRODUCT` and enforced by test.
+
+1. **Does Zedek retrieve licensed translation text?** If Scripture passed to a
    model may be a licensed version, Crossway's reported position rules out the
    ESV and Biblica requires a specific AI licence. If Zedek is grounded only in
    public-domain texts, the entire problem disappears. This is an architecture
-   decision, not a legal one.
-3. **Default translation.** BSB recommended — public domain, contemporary
+   decision, not a legal one, and it is now the highest-value open question.
+2. **Default translation.** BSB recommended — public domain, contemporary
    English, native JSON. KJV appears in the design docs but is archaic English
    and was not researched; say if you want it.
-4. **Tier 3 intent.** Which licensed versions justify negotiation? API.Bible
-   covers NASB, CSB, NKJV and NLT in one agreement. ESV needs its own. NRSV is
-   bespoke with no published fees.
-5. **LSV verse cap.** Worth an email to Covenant Press if the LSV matters.
-6. **Coverage verification.** OEB and FBV need book coverage confirmed.
+3. **Tier 3 intent and budget.** Every licensed version now costs money.
+   API.Bible covers NASB, CSB, NKJV and NLT in one agreement from roughly
+   $29/month plus ~$10/month per translation. ESV needs its own paid Crossway
+   licence with no published price. NRSV is bespoke with no published fees.
+   Which of these earns its cost?
+4. **LSV verse cap.** Worth an email to Covenant Press if the LSV matters.
+5. **Coverage verification.** OEB and FBV need book coverage confirmed.
 
 ---
 
-## 10. Recommendation
+## 11. Recommendation
 
 **Ship BSB and WEB at MVP.** Both are public domain with no obligations, both
 publish machine-readable text, and together they give one contemporary
@@ -411,14 +439,23 @@ work within.
 
 Then, in order:
 
-1. **Add LSV** once attribution rendering exists. Cheap, and it proves the
-   attribution path works before money is at stake.
-2. **Decide monetisation**, because it silently eliminates options.
-3. **Pursue API.Bible** if licensed versions matter — four translations, one
-   agreement, published pricing, generous caching. Budget for FUMS
-   instrumentation and review its privacy implications.
+1. **Add LSV** once attribution rendering exists. It costs nothing, and it
+   proves the attribution path works before money is at stake. Doing this
+   before any Tier 3 negotiation means the hard part is already built when a
+   paid licence arrives.
+2. **Decide whether Zedek may retrieve licensed text.** Grounding Zedek in
+   public-domain texts only keeps the AI question permanently closed and
+   removes Crossway and Biblica's AI positions from the critical path.
+3. **Pursue API.Bible** if licensed versions earn their cost — four
+   translations under one agreement, published pricing, generous caching.
+   Budget for FUMS instrumentation and review its privacy implications against
+   the referrer-policy reasoning already applied in `apps/web/next.config.ts`.
 4. **Investigate YouVersion Platform Services** — newest programme, deepest
    licence portfolio, terms entirely unknown.
+
+A reasonable end state is Tier 1 free for everyone, with licensed translations
+as a paid-plan feature that funds their own licences. Nothing in the registry
+assumes that, but nothing prevents it either.
 
 Treat Tier 3 as a commercial track that runs in parallel and **gates nothing**.
 The reader ships on Tier 1.
