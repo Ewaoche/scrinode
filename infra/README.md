@@ -145,10 +145,19 @@ Notes, highlights, collections and workspaces exist nowhere else.
 
 ## Deploying
 
-Automatic on a push to `main`, once `verify` and `e2e` both pass. The
-workflow SSHes in and runs `deploy.sh`; the droplet builds the image itself,
-because it holds the layer cache and the running stack, and shipping an image
-from CI would need a registry for no benefit at this scale.
+**Deployment is off until you turn it on.** The job is gated on a repository
+variable `DEPLOY_ENABLED`, which does not exist yet — so the deploy job is
+skipped rather than failing on absent secrets. A pipeline that is always red
+stops being read.
+
+Once the droplet exists and the secrets below are set, add the repository
+variable `DEPLOY_ENABLED = true` (Settings → Secrets and variables → Actions
+→ Variables). Deployment then runs on every push to `main` once `verify` and
+`e2e` both pass.
+
+The workflow SSHes in and runs `deploy.sh`; the droplet builds the image
+itself, because it holds the layer cache and the running stack, and shipping
+an image from CI would need a registry for no benefit at this scale.
 
 By hand, when needed:
 
@@ -159,16 +168,22 @@ cd /srv/scrinode && git pull && ./infra/deploy.sh
 Either way it backs up, builds, migrates, restarts, and waits for readiness
 before reporting success.
 
-### Repository secrets
+### Repository secrets and variables
 
-Set these under Settings → Secrets → Actions. Until they exist the deploy job
-fails, which is the correct failure — a silent skip would look like success.
+Set these under Settings → Secrets and variables → Actions.
+
+| Variable | Value |
+|---|---|
+| `DEPLOY_ENABLED` | `true` to enable deployment. Absent means the job skips. |
 
 | Secret | Value |
 |---|---|
 | `DROPLET_HOST` | Hostname or IP |
 | `DROPLET_USER` | The deploy user — **not** root |
 | `DROPLET_SSH_KEY` | Private key for that user |
+
+Set the secrets *before* the variable. With `DEPLOY_ENABLED` on and secrets
+missing, the job runs and fails at the SSH step.
 
 The deploy job is gated on `github.event_name == 'push'` as well as the ref,
 so a pull request cannot reach the droplet, and serialised by a concurrency

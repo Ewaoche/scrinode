@@ -1349,6 +1349,10 @@ Rules:
 - **Migrations run as a deploy step, never on boot.** Between the migration
   and the restart the old code serves traffic against the new schema, which
   is why §24 requires expand → migrate → contract.
+- **Deployment is gated on `DEPLOY_ENABLED`.** The CI/CD workflow carries a
+  deploy job, but it is off until that repository variable is set — the
+  droplet does not exist yet, and a pipeline that fails on every push stops
+  being read. Until then, `infra/deploy.sh` is run by hand.
 - **Keep NestJS cloud-portable.** Containerising it serves this rather than
   working against it: the image runs anywhere, and nothing in domain code
   knows it is on a droplet.

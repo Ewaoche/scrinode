@@ -165,8 +165,17 @@ jobs:
     # Only after both gates pass, and only from main. A pull request must
     # never reach the droplet, and `github.event_name` is checked as well as
     # the ref because a `pull_request` run can carry a main-looking ref.
+    #
+    # `vars.DEPLOY_ENABLED` is the switch that turns deployment on. It is off
+    # until the droplet exists: without it every push to main would end in a
+    # red X for missing secrets, and a pipeline that is always failing stops
+    # being read. Set the repository variable to 'true' once the secrets in
+    # infra/README.md are in place.
     needs: [verify, e2e]
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: >-
+      github.ref == 'refs/heads/main'
+      && github.event_name == 'push'
+      && vars.DEPLOY_ENABLED == 'true'
 
     # Serialises deploys. Two overlapping runs would migrate and restart the
     # same stack concurrently; the migration runner's advisory lock makes
