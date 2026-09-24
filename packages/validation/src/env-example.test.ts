@@ -64,7 +64,7 @@ describe('.env.example', () => {
   it('documents every variable the API schema requires', () => {
     const documented = documentedVariables();
 
-    for (const name of ['MONGODB_URI', 'MONGODB_DB', 'API_PORT']) {
+    for (const name of ['DATABASE_URL', 'DATABASE_SSL', 'DATABASE_POOL_MAX', 'API_PORT']) {
       expect(documented.has(name), `${name} missing from .env.example`).toBe(true);
     }
   });

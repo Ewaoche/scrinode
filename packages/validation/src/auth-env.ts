@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { mongoUriSchema, nodeEnvSchema } from './env.js';
+import { nodeEnvSchema, postgresUriSchema } from './env.js';
 
 /**
  * Reader authentication environment — AGENTS.md §27.1.
@@ -24,8 +24,7 @@ export const webAuthEnvSchema = z
     NODE_ENV: nodeEnvSchema,
     NEXTAUTH_URL: z.url('NEXTAUTH_URL must be an absolute URL'),
     NEXTAUTH_SECRET: authSecretSchema,
-    MONGODB_URI: mongoUriSchema,
-    MONGODB_DB: z.string().min(1),
+    DATABASE_URL: postgresUriSchema,
 
     // Google OAuth. Both halves are required together or neither.
     GOOGLE_CLIENT_ID: z.string().optional(),

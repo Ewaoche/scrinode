@@ -11,16 +11,20 @@ import { corsOriginsSchema } from './security-env.js';
 export const nodeEnvSchema = z.enum(['development', 'test', 'production']).default('development');
 
 /**
- * A MongoDB connection string.
+ * A PostgreSQL connection string.
  *
- * Accepts both `mongodb://` and `mongodb+srv://`. The value is a secret and
- * must never be logged or committed.
+ * Accepts both `postgres://` and `postgresql://`, which libpq treats as
+ * equivalent. The value is a secret and must never be logged or committed.
+ *
+ * Deliberately not parsed further here. A connection string carries options
+ * whose validity only the driver can judge, and rejecting a string this
+ * schema failed to understand would block a legitimate deploy.
  */
-export const mongoUriSchema = z
+export const postgresUriSchema = z
   .string()
-  .min(1, 'MONGODB_URI is required')
-  .refine((v) => v.startsWith('mongodb://') || v.startsWith('mongodb+srv://'), {
-    message: 'Expected a mongodb:// or mongodb+srv:// connection string',
+  .min(1, 'DATABASE_URL is required')
+  .refine((v) => v.startsWith('postgres://') || v.startsWith('postgresql://'), {
+    message: 'Expected a postgres:// or postgresql:// connection string',
   });
 
 export const databaseNameSchema = z
@@ -30,12 +34,37 @@ export const databaseNameSchema = z
 
 export const portSchema = z.coerce.number().int().min(1).max(65535);
 
+/**
+ * Whether to require TLS to the database.
+ *
+ * On the droplet the application reaches Postgres over a private compose
+ * network and TLS is unnecessary; a managed database reached across a network
+ * requires it. Defaulting to `false` matches the deployment we actually have,
+ * and the setting is explicit so moving to a managed database is a
+ * configuration change rather than a code change.
+ */
+export const booleanFlagSchema = z
+  .enum(['true', 'false'])
+  .default('false')
+  .transform((v) => v === 'true');
+
+/**
+ * Maximum pooled connections.
+ *
+ * Postgres allocates a backend process per connection, so a pool that is too
+ * large exhausts the server rather than improving throughput. The default
+ * suits a single API instance on a small droplet; raise it only alongside
+ * Postgres's own `max_connections`.
+ */
+export const poolSizeSchema = z.coerce.number().int().min(1).max(100).default(10);
+
 /** Environment required by `@scrinode/api`. */
 export const apiEnvSchema = z.object({
   NODE_ENV: nodeEnvSchema,
   API_PORT: portSchema.default(4000),
-  MONGODB_URI: mongoUriSchema,
-  MONGODB_DB: databaseNameSchema,
+  DATABASE_URL: postgresUriSchema,
+  DATABASE_SSL: booleanFlagSchema,
+  DATABASE_POOL_MAX: poolSizeSchema,
 
   // Origins permitted to call the API. Defaults to the local reader and
   // backoffice so development needs no configuration; every deployed

@@ -6,8 +6,7 @@ const base = {
   NODE_ENV: 'test',
   NEXTAUTH_URL: 'http://localhost:3000',
   NEXTAUTH_SECRET: 'x'.repeat(32),
-  MONGODB_URI: 'mongodb://localhost:27017',
-  MONGODB_DB: 'scrinode_test',
+  DATABASE_URL: 'postgres://localhost:5432/scrinode_test',
   GOOGLE_CLIENT_ID: 'id',
   GOOGLE_CLIENT_SECRET: 'secret',
 };

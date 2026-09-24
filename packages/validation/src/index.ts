@@ -14,10 +14,12 @@ export {
 
 export {
   apiEnvSchema,
+  booleanFlagSchema,
   databaseNameSchema,
-  mongoUriSchema,
   nodeEnvSchema,
+  poolSizeSchema,
   portSchema,
+  postgresUriSchema,
   validateEnv,
   type ApiEnv,
 } from './env.js';
