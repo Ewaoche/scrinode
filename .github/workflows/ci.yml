@@ -58,15 +58,19 @@ jobs:
         # package.json, so a dependency change cannot land unrecorded.
         run: pnpm install --frozen-lockfile
 
-      - name: Enable pgvector
+      - name: Enable extensions
         # CREATE EXTENSION needs privileges the application role lacks, so it
         # happens here rather than in a migration — the same division as the
-        # container's init SQL locally.
+        # container's init SQL locally. This list must match
+        # infra/postgres/init/001-extensions.sql, minus postgis, which no
+        # test needs and which would slow every CI run.
         run: |
           PGPASSWORD=scrinode_ci psql -h localhost -U scrinode -d scrinode_ci \
             -c 'CREATE EXTENSION IF NOT EXISTS vector' \
             -c 'CREATE EXTENSION IF NOT EXISTS pg_trgm' \
-            -c 'CREATE EXTENSION IF NOT EXISTS unaccent'
+            -c 'CREATE EXTENSION IF NOT EXISTS fuzzystrmatch' \
+            -c 'CREATE EXTENSION IF NOT EXISTS unaccent' \
+            -c 'CREATE EXTENSION IF NOT EXISTS btree_gin'
 
       - name: Verify
         # Boundary violations, type errors and failing tests all fail here.

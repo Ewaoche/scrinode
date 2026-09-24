@@ -18,13 +18,52 @@ pgvector runs inside the database we already need. Storage is droplet disk.
 | Extension | Purpose | In use |
 |---|---|---|
 | `vector` | Similarity search over embeddings | Yes |
-| `pg_trgm` | Partial and fuzzy keyword matching (§14) | Yes |
-| `unaccent` | Accent-insensitive transliteration search | Yes |
+| `pg_trgm` | Partial and misspelled keyword matching (§14) | Yes |
+| `fuzzystrmatch` | Phonetic matching for proper names | Yes |
+| `unaccent` | Accent-insensitive search | Yes — via migration 0004 |
+| `btree_gin` | One index over a trigram column plus a scalar filter | Yes |
 | `postgis` | Geospatial | **No — installed ahead of Phase 2** |
+
+All but `vector` and `postgis` ship with the official `postgres` image, which
+pgvector's image is built on. Nothing extra is installed for them.
+
+**`unaccent` needs more than installing.** It is a filtering dictionary:
+`unaccent('agápē')` works as a function call, but `to_tsvector` ignores it
+entirely unless a text search configuration names it. Migration 0004 creates
+`scrinode_english` — English stemming with diacritics stripped first — and an
+`immutable_unaccent` wrapper, because the stock function is `STABLE` and
+Postgres refuses a `STABLE` function in an index expression.
+
+An earlier version of this stack had the extension installed and unusable.
+Every structural check passed while accent-insensitive search silently did
+not exist, which is why `text-search.test.ts` asserts behaviour rather than
+schema.
+
+**Why `fuzzystrmatch` alongside `pg_trgm`.** Trigram compares spelling;
+`dmetaphone` compares sound. Biblical proper names need both:
+
+| A reader types | The text has | Trigram | Phonetic |
+|---|---|---|---|
+| Nebuchadnezer | Nebuchadnezzar | likely | yes |
+| Zaccheus | Zacchaeus | marginal | yes |
+| Isaiah | **Isaias** (Douay-Rheims) | no | yes |
+
+The last row is the argument. Douay-Rheims prints *Isaias*, *Osee* and
+*Abdias* where other editions print *Isaiah*, *Hosea* and *Obadiah*, and
+Scrinode serves both (AGENTS.md §22.2).
 
 PostGIS carries no tables yet. It is installed because adding an extension to
 a live database later is a migration with superuser requirements, and the cost
 now is image size only.
+
+## Extensions considered and not installed
+
+| Extension | Why not |
+|---|---|
+| `pgcrypto` | Not needed. `gen_random_uuid()` is core since PG13, which is what every `uuid` key uses. |
+| `pg_cron` | AGENTS.md §29 specifies Vercel Cron → queue → worker. Revisit only if that queue never ships; it also needs `shared_preload_libraries`. |
+| `pg_stat_statements` | Defensible — §34 requires query-latency tracking. Deferred because observability is not wired up and it needs `shared_preload_libraries`, so it is a compose change rather than init SQL. |
+| `vectorscale` | StreamingDiskANN beats HNSW at scale and allows an index larger than RAM, but it needs a different base image. Revisit if the index outgrows the droplet. |
 
 ## Vector storage
 

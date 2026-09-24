@@ -659,6 +659,34 @@ Search principle:
 
 Do not lead semantic queries with AI prose when direct Scripture results are available.
 
+## 14.1 How each class is served
+
+Keyword, phrase and semantic queries use different machinery, and using the
+wrong one silently returns worse results rather than failing.
+
+```text
+reference_query          parsed, never searched — §42 forbids duplicating this
+keyword_query            full-text search over translation_texts.search_vector
+phrase_query             full-text, with a phrase operator
+semantic_query           pgvector over retrieval_units (§19, §20)
+entity_query             phonetic match on proper names, then full-text
+original_language_query  lexical data — not yet sourced
+```
+
+Rules:
+
+- **Name the text search configuration.** `to_tsvector('scrinode_english', …)`,
+  never the one-argument form, which reads a session setting and can produce
+  a vector the index does not match.
+- **`scrinode_english` strips diacritics before stemming.** Transliterated
+  Greek and Hebrew reach the reader with accents nobody types; a search for
+  "agape" must find "agápē".
+- **Proper names need phonetic matching, not only trigram.** Douay-Rheims
+  prints *Isaias* where other editions print *Isaiah*, and trigram cannot
+  bridge that. Use `dmetaphone`; rank with `levenshtein`.
+- **Scope keyword search to a translation.** Unscoped, a hit repeats once per
+  translation loaded.
+
 ---
 
 # 15. Study Architecture

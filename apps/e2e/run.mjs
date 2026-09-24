@@ -89,6 +89,9 @@ try {
   await setup.connect();
   await setup.query('CREATE EXTENSION IF NOT EXISTS vector');
   await setup.query('CREATE EXTENSION IF NOT EXISTS pg_trgm');
+  await setup.query('CREATE EXTENSION IF NOT EXISTS fuzzystrmatch');
+  await setup.query('CREATE EXTENSION IF NOT EXISTS unaccent');
+  await setup.query('CREATE EXTENSION IF NOT EXISTS btree_gin');
 } finally {
   await setup.end();
 }
