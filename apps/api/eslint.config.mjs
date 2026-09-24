@@ -16,7 +16,7 @@ export default [
     },
   },
   {
-    // AGENTS.md §8: domain services must not import the MongoDB driver
+    // AGENTS.md §8: domain services must not import the database driver
     // directly. Repositories and the database module are the only places
     // driver types may appear, which keeps the data layer replaceable.
     files: ['src/**/*.ts'],
@@ -27,9 +27,15 @@ export default [
         {
           paths: [
             {
-              name: 'mongodb',
+              name: 'pg',
               message:
-                'Domain services must not import the MongoDB driver. Use a repository ' +
+                'Domain services must not import the pg driver. Use a repository ' +
+                'in src/database instead (AGENTS.md §8).',
+            },
+            {
+              name: 'pg-pool',
+              message:
+                'Domain services must not import the pg driver. Use a repository ' +
                 'in src/database instead (AGENTS.md §8).',
             },
           ],

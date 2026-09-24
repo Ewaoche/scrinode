@@ -4,25 +4,24 @@ import { loadEnv } from './env.config';
 const validEnv = {
   NODE_ENV: 'test',
   API_PORT: '4000',
-  MONGODB_URI: 'mongodb://localhost:27017',
-  MONGODB_DB: 'scrinode_test',
+  DATABASE_URL: 'postgres://localhost:5432/scrinode_test',
 } as unknown as NodeJS.ProcessEnv;
 
 describe('loadEnv', () => {
   it('returns a validated environment', () => {
     const env = loadEnv(validEnv);
-    expect(env.MONGODB_DB).toBe('scrinode_test');
+    expect(env.DATABASE_URL).toContain('scrinode_test');
     expect(env.API_PORT).toBe(4000);
   });
 
-  it('fails when MONGODB_URI is missing', () => {
-    const { MONGODB_URI: _omitted, ...rest } = validEnv;
-    expect(() => loadEnv(rest as NodeJS.ProcessEnv)).toThrow(/MONGODB_URI/);
+  it('fails when DATABASE_URL is missing', () => {
+    const { DATABASE_URL: _omitted, ...rest } = validEnv;
+    expect(() => loadEnv(rest as NodeJS.ProcessEnv)).toThrow(/DATABASE_URL/);
   });
 
   it('fails on a malformed connection string', () => {
     expect(() =>
-      loadEnv({ ...validEnv, MONGODB_URI: 'not-a-uri' } as NodeJS.ProcessEnv),
+      loadEnv({ ...validEnv, DATABASE_URL: 'not-a-uri' } as NodeJS.ProcessEnv),
     ).toThrow(/Invalid environment configuration/);
   });
 

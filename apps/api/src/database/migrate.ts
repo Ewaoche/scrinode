@@ -1,5 +1,5 @@
 import { Logger } from '@nestjs/common';
-import { MongoClient } from 'mongodb';
+import { Pool } from 'pg';
 import { loadEnv } from '../config/env.config';
 import { MigrationRunner } from './migration.runner';
 import { MIGRATIONS } from './migrations';
@@ -39,17 +39,18 @@ async function main(): Promise<void> {
   const command = parseCommand(process.argv);
   const env = loadEnv();
 
-  const client = new MongoClient(env.MONGODB_URI);
+  const pool = new Pool({
+    connectionString: env.DATABASE_URL,
+    ...(env.DATABASE_SSL ? { ssl: { rejectUnauthorized: true } } : {}),
+  });
 
   try {
-    await client.connect();
-
-    const db = client.db(env.MONGODB_DB);
-    const runner = new MigrationRunner(db, MIGRATIONS);
+    const runner = new MigrationRunner(pool, MIGRATIONS);
 
     // Name the target so an accidental run against the wrong database is
-    // visible in the log.
-    logger.log(`Database: ${env.MONGODB_DB} (${env.NODE_ENV})`);
+    // visible in the log. Host and database name only — a connection string
+    // carries a password and must never be logged.
+    logger.log(`Database: ${describeTarget(env.DATABASE_URL)} (${env.NODE_ENV})`);
 
     if (command === 'status') {
       const { applied, pending } = await runner.status();
@@ -76,7 +77,22 @@ async function main(): Promise<void> {
     const reverted = await runner.down();
     logger.log(reverted ? `Reverted ${reverted.version} ${reverted.name}` : 'Nothing to revert');
   } finally {
-    await client.close();
+    await pool.end();
+  }
+}
+
+/**
+ * Describes the connection target without its credentials.
+ *
+ * Returns `host:port/database`. Falls back to a placeholder rather than
+ * risking a partial connection string in the log if parsing fails.
+ */
+function describeTarget(connectionString: string): string {
+  try {
+    const url = new URL(connectionString);
+    return `${url.host}${url.pathname}`;
+  } catch {
+    return '(unparsed connection string)';
   }
 }
 

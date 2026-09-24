@@ -1,34 +1,39 @@
-import { MongoMemoryServer } from 'mongodb-memory-server';
-import { MongoClient, type Db } from 'mongodb';
+import type { Pool } from 'pg';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { MigrationError, MigrationRunner } from './migration.runner';
 import type { Migration } from './migration.types';
-import { MIGRATIONS_COLLECTION } from './database.constants';
+import { MIGRATIONS_TABLE } from './database.constants';
+import { NO_DATABASE_MESSAGE, createTestSchema, hasTestDatabase } from './testing/postgres';
 
 /**
- * Runs against a real MongoDB server, in memory. Index creation, unique
- * constraints and ordering guarantees cannot be verified against a mock.
+ * Runs against a real PostgreSQL. Transactional DDL, advisory locks and
+ * ON CONFLICT behaviour cannot be verified against a mock, and the whole
+ * point of the runner is that those hold.
+ *
+ * Skipped when no database is configured — see `testing/postgres.ts`.
  */
-describe('MigrationRunner', () => {
-  let mongod: MongoMemoryServer;
-  let client: MongoClient;
-  let db: Db;
+const describeWithDatabase = hasTestDatabase() ? describe : describe.skip;
+
+if (!hasTestDatabase()) {
+  console.warn(`\n[migration.runner.test] ${NO_DATABASE_MESSAGE}\n`);
+}
+
+describeWithDatabase('MigrationRunner', () => {
+  let pool: Pool;
+  let drop: () => Promise<void>;
 
   beforeAll(async () => {
-    mongod = await MongoMemoryServer.create();
-    client = new MongoClient(mongod.getUri());
-    await client.connect();
-    db = client.db('migration_test');
-  }, 120_000);
+    ({ pool, drop } = await createTestSchema('migration_runner'));
+  }, 60_000);
 
   afterAll(async () => {
-    await client.close();
-    await mongod.stop();
+    await drop();
   });
 
   afterEach(async () => {
-    const collections = await db.collections();
-    await Promise.all(collections.map((c) => c.drop().catch(() => undefined)));
+    // Between cases, clear everything the migrations under test created.
+    await pool.query(`DROP TABLE IF EXISTS ${MIGRATIONS_TABLE}`);
+    await pool.query('DROP TABLE IF EXISTS made_by_migration');
   });
 
   const record = (version: number, name: string, log: string[]): Migration => ({
@@ -45,7 +50,7 @@ describe('MigrationRunner', () => {
   describe('up', () => {
     it('applies a pending migration', async () => {
       const log: string[] = [];
-      const applied = await new MigrationRunner(db, [record(1, 'first', log)]).up();
+      const applied = await new MigrationRunner(pool, [record(1, 'first', log)]).up();
 
       expect(log).toEqual(['up:1']);
       expect(applied).toHaveLength(1);
@@ -55,9 +60,13 @@ describe('MigrationRunner', () => {
     it('applies migrations in ascending version order', async () => {
       const log: string[] = [];
       // Deliberately registered out of order.
-      const migrations = [record(3, 'third', log), record(1, 'first', log), record(2, 'second', log)];
+      const migrations = [
+        record(3, 'third', log),
+        record(1, 'first', log),
+        record(2, 'second', log),
+      ];
 
-      await new MigrationRunner(db, migrations).up();
+      await new MigrationRunner(pool, migrations).up();
 
       expect(log).toEqual(['up:1', 'up:2', 'up:3']);
     });
@@ -66,8 +75,8 @@ describe('MigrationRunner', () => {
       const log: string[] = [];
       const migrations = [record(1, 'first', log)];
 
-      await new MigrationRunner(db, migrations).up();
-      const second = await new MigrationRunner(db, migrations).up();
+      await new MigrationRunner(pool, migrations).up();
+      const second = await new MigrationRunner(pool, migrations).up();
 
       expect(log).toEqual(['up:1']);
       expect(second).toHaveLength(0);
@@ -76,20 +85,24 @@ describe('MigrationRunner', () => {
     it('applies only migrations added since the last run', async () => {
       const log: string[] = [];
 
-      await new MigrationRunner(db, [record(1, 'first', log)]).up();
-      await new MigrationRunner(db, [record(1, 'first', log), record(2, 'second', log)]).up();
+      await new MigrationRunner(pool, [record(1, 'first', log)]).up();
+      await new MigrationRunner(pool, [record(1, 'first', log), record(2, 'second', log)]).up();
 
       expect(log).toEqual(['up:1', 'up:2']);
     });
 
     it('records each applied migration', async () => {
-      await new MigrationRunner(db, [record(1, 'first', [])]).up();
+      await new MigrationRunner(pool, [record(1, 'first', [])]).up();
 
-      const stored = await db.collection(MIGRATIONS_COLLECTION).findOne({ version: 1 });
+      const { rows } = await pool.query<{
+        name: string;
+        applied_at: Date;
+        duration_ms: string;
+      }>(`SELECT name, applied_at, duration_ms FROM ${MIGRATIONS_TABLE} WHERE version = 1`);
 
-      expect(stored?.name).toBe('first');
-      expect(stored?.appliedAt).toBeInstanceOf(Date);
-      expect(stored?.durationMs).toBeGreaterThanOrEqual(0);
+      expect(rows[0]?.name).toBe('first');
+      expect(rows[0]?.applied_at).toBeInstanceOf(Date);
+      expect(Number(rows[0]?.duration_ms)).toBeGreaterThanOrEqual(0);
     });
 
     it('stops at the first failure and does not attempt later migrations', async () => {
@@ -103,7 +116,7 @@ describe('MigrationRunner', () => {
         async down() {},
       };
 
-      const runner = new MigrationRunner(db, [
+      const runner = new MigrationRunner(pool, [
         record(1, 'first', log),
         failing,
         record(3, 'third', log),
@@ -123,10 +136,68 @@ describe('MigrationRunner', () => {
         async down() {},
       };
 
-      await expect(new MigrationRunner(db, [failing]).up()).rejects.toThrow();
+      await expect(new MigrationRunner(pool, [failing]).up()).rejects.toThrow();
 
-      const count = await db.collection(MIGRATIONS_COLLECTION).countDocuments();
-      expect(count).toBe(0);
+      const { rows } = await pool.query<{ count: string }>(
+        `SELECT count(*) AS count FROM ${MIGRATIONS_TABLE}`,
+      );
+      expect(Number(rows[0]?.count)).toBe(0);
+    });
+
+    it('rolls back schema changes made before a migration failed', async () => {
+      // The reason migrations run in a transaction. Under MongoDB a failure
+      // partway left whatever the successful statements had already done,
+      // and the runner could only report it.
+      const partial: Migration = {
+        version: 1,
+        name: 'fails-after-creating-a-table',
+        async up(client) {
+          await client.query('CREATE TABLE made_by_migration (id integer)');
+          throw new Error('boom');
+        },
+        async down() {},
+      };
+
+      await expect(new MigrationRunner(pool, [partial]).up()).rejects.toThrow(MigrationError);
+
+      const { rows } = await pool.query<{ exists: boolean }>(
+        `SELECT to_regclass('made_by_migration') IS NOT NULL AS exists`,
+      );
+      expect(rows[0]?.exists).toBe(false);
+    });
+
+    it('commits the schema change and its record together', async () => {
+      const creates: Migration = {
+        version: 1,
+        name: 'creates-a-table',
+        async up(client) {
+          await client.query('CREATE TABLE made_by_migration (id integer)');
+        },
+        async down(client) {
+          await client.query('DROP TABLE made_by_migration');
+        },
+      };
+
+      await new MigrationRunner(pool, [creates]).up();
+
+      const { rows } = await pool.query<{ exists: boolean }>(
+        `SELECT to_regclass('made_by_migration') IS NOT NULL AS exists`,
+      );
+      expect(rows[0]?.exists).toBe(true);
+    });
+
+    it('serialises concurrent runs so a migration is applied once', async () => {
+      // Two API instances booting together would otherwise both read an
+      // empty table and both try to apply version 1.
+      const log: string[] = [];
+      const migrations = [record(1, 'first', log)];
+
+      await Promise.all([
+        new MigrationRunner(pool, migrations).up(),
+        new MigrationRunner(pool, migrations).up(),
+      ]);
+
+      expect(log).toEqual(['up:1']);
     });
   });
 
@@ -135,8 +206,8 @@ describe('MigrationRunner', () => {
       const log: string[] = [];
       const migrations = [record(1, 'first', log), record(2, 'second', log)];
 
-      await new MigrationRunner(db, migrations).up();
-      const reverted = await new MigrationRunner(db, migrations).down();
+      await new MigrationRunner(pool, migrations).up();
+      const reverted = await new MigrationRunner(pool, migrations).down();
 
       expect(log).toEqual(['up:1', 'up:2', 'down:2']);
       expect(reverted?.version).toBe(2);
@@ -146,22 +217,22 @@ describe('MigrationRunner', () => {
       const log: string[] = [];
       const migrations = [record(1, 'first', log)];
 
-      await new MigrationRunner(db, migrations).up();
-      await new MigrationRunner(db, migrations).down();
-      await new MigrationRunner(db, migrations).up();
+      await new MigrationRunner(pool, migrations).up();
+      await new MigrationRunner(pool, migrations).down();
+      await new MigrationRunner(pool, migrations).up();
 
       expect(log).toEqual(['up:1', 'down:1', 'up:1']);
     });
 
     it('returns undefined when nothing is applied', async () => {
-      expect(await new MigrationRunner(db, []).down()).toBeUndefined();
+      expect(await new MigrationRunner(pool, []).down()).toBeUndefined();
     });
 
     it('refuses to roll back when the definition is missing', async () => {
-      await new MigrationRunner(db, [record(1, 'first', [])]).up();
+      await new MigrationRunner(pool, [record(1, 'first', [])]).up();
 
       // Simulates the migration file being deleted after it was applied.
-      await expect(new MigrationRunner(db, []).down()).rejects.toThrow(/definition is missing/);
+      await expect(new MigrationRunner(pool, []).down()).rejects.toThrow(/definition is missing/);
     });
 
     it('keeps the record when rollback fails', async () => {
@@ -174,11 +245,13 @@ describe('MigrationRunner', () => {
         },
       };
 
-      await new MigrationRunner(db, [failing]).up();
-      await expect(new MigrationRunner(db, [failing]).down()).rejects.toThrow(MigrationError);
+      await new MigrationRunner(pool, [failing]).up();
+      await expect(new MigrationRunner(pool, [failing]).down()).rejects.toThrow(MigrationError);
 
-      const count = await db.collection(MIGRATIONS_COLLECTION).countDocuments();
-      expect(count).toBe(1);
+      const { rows } = await pool.query<{ count: string }>(
+        `SELECT count(*) AS count FROM ${MIGRATIONS_TABLE}`,
+      );
+      expect(Number(rows[0]?.count)).toBe(1);
     });
   });
 
@@ -187,29 +260,46 @@ describe('MigrationRunner', () => {
       const log: string[] = [];
       const migrations = [record(1, 'first', log), record(2, 'second', log)];
 
-      await new MigrationRunner(db, [migrations[0]!]).up();
-      const status = await new MigrationRunner(db, migrations).status();
+      await new MigrationRunner(pool, [migrations[0]!]).up();
+      const status = await new MigrationRunner(pool, migrations).status();
 
       expect(status.applied.map((r) => r.version)).toEqual([1]);
       expect(status.pending.map((m) => m.version)).toEqual([2]);
     });
   });
+});
 
-  describe('validation', () => {
-    it('rejects duplicate versions before running anything', () => {
-      expect(
-        () => new MigrationRunner(db, [record(1, 'a', []), record(1, 'b', [])]),
-      ).toThrow(/Duplicate migration version 1/);
-    });
+/**
+ * Validation happens in the constructor, before any query, so these need no
+ * database and must run everywhere — a malformed migration set should fail a
+ * developer's suite whether or not they have Postgres running.
+ */
+describe('MigrationRunner validation', () => {
+  const stub = (version: number, name: string): Migration => ({
+    version,
+    name,
+    async up() {},
+    async down() {},
+  });
 
-    it('rejects a non-positive version', () => {
-      expect(() => new MigrationRunner(db, [record(0, 'zero', [])])).toThrow(/expected a positive integer/);
-    });
+  // Never connected to: the constructor throws before any query.
+  const pool = {} as Pool;
 
-    it('rejects a fractional version', () => {
-      expect(() => new MigrationRunner(db, [record(1.5, 'half', [])])).toThrow(
-        /expected a positive integer/,
-      );
-    });
+  it('rejects duplicate versions before running anything', () => {
+    expect(() => new MigrationRunner(pool, [stub(1, 'a'), stub(1, 'b')])).toThrow(
+      /Duplicate migration version 1/,
+    );
+  });
+
+  it('rejects a non-positive version', () => {
+    expect(() => new MigrationRunner(pool, [stub(0, 'zero')])).toThrow(
+      /expected a positive integer/,
+    );
+  });
+
+  it('rejects a fractional version', () => {
+    expect(() => new MigrationRunner(pool, [stub(1.5, 'half')])).toThrow(
+      /expected a positive integer/,
+    );
   });
 });

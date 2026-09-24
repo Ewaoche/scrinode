@@ -28,7 +28,7 @@ export class HealthService {
    * Readiness to serve traffic.
    *
    * Unlike liveness, this does check dependencies: a process that cannot
-   * reach MongoDB should be taken out of rotation rather than restarted.
+   * reach the database should be taken out of rotation rather than restarted.
    */
   async readiness(): Promise<HealthReport> {
     const checks: Record<string, 'ok' | 'failing'> = {};

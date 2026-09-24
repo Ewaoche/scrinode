@@ -1,17 +1,18 @@
-import { Global, Module } from '@nestjs/common';
+import { Global, Inject, Logger, Module, type OnApplicationShutdown } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { MongoClient } from 'mongodb';
-import { MONGO_CLIENT, MONGO_DB } from './database.constants';
+import { Pool } from 'pg';
+import { PG_POOL } from './database.constants';
 import { DatabaseHealthIndicator } from './database.health';
 
 /**
- * MongoDB connection.
+ * PostgreSQL connection pool.
  *
- * Scrinode uses the native driver rather than an ORM (see
- * docs/PLAN_stage1_scaffold.md §2.1): Prisma's MongoDB connector cannot run
- * $vectorSearch, which Zedek's retrieval strategy depends on (AGENTS.md §19).
+ * Scrinode uses the `pg` driver directly rather than an ORM. Retrieval
+ * depends on pgvector operators and index hints (`<=>`, `hnsw.ef_search`)
+ * that ORMs either do not express or express badly, and AGENTS.md §19 makes
+ * that retrieval path load-bearing rather than incidental.
  *
- * One pooled client per process. Repositories wrap collections; domain
+ * One pooled connection set per process. Repositories wrap queries; domain
  * services must never import the driver directly (AGENTS.md §8).
  */
 @Global()
@@ -19,29 +20,60 @@ import { DatabaseHealthIndicator } from './database.health';
   imports: [ConfigModule],
   providers: [
     {
-      provide: MONGO_CLIENT,
+      provide: PG_POOL,
       inject: [ConfigService],
-      useFactory: async (config: ConfigService): Promise<MongoClient> => {
-        const uri = config.getOrThrow<string>('MONGODB_URI');
+      useFactory: (config: ConfigService): Pool => {
+        const pool = new Pool({
+          connectionString: config.getOrThrow<string>('DATABASE_URL'),
 
-        const client = new MongoClient(uri, {
-          // Fail fast rather than hanging a request behind a dead connection.
-          serverSelectionTimeoutMS: 10_000,
-          retryWrites: true,
+          // Postgres allocates a backend process per connection, so an
+          // oversized pool exhausts the server rather than improving
+          // throughput.
+          max: config.get<number>('DATABASE_POOL_MAX') ?? 10,
+
+          // Fail fast rather than hanging a request behind a dead database.
+          connectionTimeoutMillis: 10_000,
+
+          // Release idle connections so a traffic spike does not leave the
+          // pool permanently at its maximum.
+          idleTimeoutMillis: 30_000,
+
+          ...(config.get<boolean>('DATABASE_SSL')
+            ? // A managed database presents a certificate from its own
+              // authority. `rejectUnauthorized` stays true: accepting any
+              // certificate would make TLS decorative.
+              { ssl: { rejectUnauthorized: true } }
+            : {}),
         });
 
-        await client.connect();
-        return client;
+        // An idle client can fail between checkouts — a network drop, or the
+        // server closing the connection. Without a listener, `pg` emits an
+        // unhandled 'error' event, which terminates the process.
+        //
+        // The pool discards the broken connection itself; this only stops it
+        // from taking the application down with it.
+        pool.on('error', (error: Error) => {
+          new Logger('DatabasePool').error(`Idle client error: ${error.message}`);
+        });
+
+        return pool;
       },
-    },
-    {
-      provide: MONGO_DB,
-      inject: [MONGO_CLIENT, ConfigService],
-      useFactory: (client: MongoClient, config: ConfigService) =>
-        client.db(config.getOrThrow<string>('MONGODB_DB')),
     },
     DatabaseHealthIndicator,
   ],
-  exports: [MONGO_CLIENT, MONGO_DB, DatabaseHealthIndicator],
+  exports: [PG_POOL, DatabaseHealthIndicator],
 })
-export class DatabaseModule {}
+export class DatabaseModule implements OnApplicationShutdown {
+  constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
+
+  /**
+   * Closes the pool on shutdown.
+   *
+   * Without this, a redeploy leaves connections held until Postgres times
+   * them out, and a rolling restart can exhaust `max_connections` with
+   * connections belonging to processes that no longer exist.
+   */
+  async onApplicationShutdown(): Promise<void> {
+    await this.pool.end();
+  }
+}

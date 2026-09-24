@@ -1,27 +1,30 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import type { Db } from 'mongodb';
-import { MONGO_DB } from './database.constants';
+import type { Pool } from 'pg';
+import { PG_POOL } from './database.constants';
 
 /**
- * Readiness check for MongoDB.
+ * Readiness check for PostgreSQL.
  *
  * Used by `/health/ready` only. Liveness deliberately excludes it: restarting
- * a healthy process because Atlas is briefly slow turns a blip into an outage.
+ * a healthy process because the database is briefly slow turns a blip into an
+ * outage.
  */
 @Injectable()
 export class DatabaseHealthIndicator {
   private readonly logger = new Logger(DatabaseHealthIndicator.name);
 
-  constructor(@Inject(MONGO_DB) private readonly db: Db) {}
+  constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
 
   async isHealthy(): Promise<boolean> {
     try {
-      await this.db.command({ ping: 1 });
+      // `SELECT 1` checks out a connection and round-trips a query, so it
+      // exercises the pool rather than only the driver's cached state.
+      await this.pool.query('SELECT 1');
       return true;
     } catch (cause) {
       // Log the failure but never the connection string.
       this.logger.warn(
-        `Database ping failed: ${cause instanceof Error ? cause.message : 'unknown error'}`,
+        `Database check failed: ${cause instanceof Error ? cause.message : 'unknown error'}`,
       );
       return false;
     }

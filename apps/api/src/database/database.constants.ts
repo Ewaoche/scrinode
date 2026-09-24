@@ -1,6 +1,5 @@
-/** Injection tokens for the MongoDB client and database handle. */
-export const MONGO_CLIENT = Symbol('MONGO_CLIENT');
-export const MONGO_DB = Symbol('MONGO_DB');
+/** Injection token for the PostgreSQL connection pool. */
+export const PG_POOL = Symbol('PG_POOL');
 
-/** Collection holding applied migration records. */
-export const MIGRATIONS_COLLECTION = 'migrations';
+/** Table holding applied migration records. */
+export const MIGRATIONS_TABLE = 'schema_migrations';
