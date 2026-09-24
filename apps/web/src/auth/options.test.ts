@@ -7,8 +7,7 @@ describe('buildAuthOptions', () => {
   const original = { ...process.env };
 
   beforeEach(() => {
-    process.env.MONGODB_URI = 'mongodb://localhost:27017';
-    process.env.MONGODB_DB = 'scrinode_test';
+    process.env.DATABASE_URL = 'postgres://localhost:5432/scrinode_test';
     process.env.NEXTAUTH_SECRET = VALID_SECRET;
     delete process.env.GOOGLE_CLIENT_ID;
     delete process.env.GOOGLE_CLIENT_SECRET;

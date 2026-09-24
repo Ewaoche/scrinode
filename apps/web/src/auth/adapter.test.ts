@@ -1,34 +1,132 @@
-import { MongoDBAdapter } from '@auth/mongodb-adapter';
-import { MongoClient } from 'mongodb';
-import { MongoMemoryServer } from 'mongodb-memory-server';
+import PostgresAdapter from '@auth/pg-adapter';
+import { Pool } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 /**
- * Verifies the Auth.js MongoDB adapter against the driver Scrinode actually
- * uses.
+ * Verifies the Auth.js PostgreSQL adapter against Scrinode's actual schema.
  *
- * @auth/mongodb-adapter declares a peer dependency on mongodb ^6 while the
- * workspace runs ^7. Rather than assume the mismatch is harmless, these tests
- * exercise the adapter's real operations against a real MongoDB 7 server. If
- * the versions are genuinely incompatible, this fails here rather than on a
- * user's first sign-in.
+ * This matters more than a version-compatibility check. Migration 0003
+ * departs from the schema Auth.js documents in two ways — `uuid` ids rather
+ * than `SERIAL`, and `ON DELETE CASCADE` on the foreign keys — because the
+ * adapter never supplies an id and its own `deleteUser` removes the user row
+ * before its sessions.
+ *
+ * Both departures are judgements about code we do not control. These tests
+ * exercise the adapter's real operations against the real schema, so a wrong
+ * judgement fails here rather than on a reader's first sign-in.
+ *
+ * Skipped when no database is configured. Start one with
+ * `docker compose up -d postgres` and set TEST_DATABASE_URL.
  */
-describe('Auth.js MongoDB adapter on the mongodb 7 driver', () => {
-  let mongod: MongoMemoryServer;
-  let client: MongoClient;
-  let adapter: ReturnType<typeof MongoDBAdapter>;
+const connectionString = process.env.TEST_DATABASE_URL;
+
+const describeWithDatabase = connectionString ? describe : describe.skip;
+
+if (!connectionString) {
+  console.warn(
+    '\n[adapter.test] TEST_DATABASE_URL is not set, so Auth.js adapter tests are skipped.' +
+      '\n  docker compose up -d postgres' +
+      '\n  TEST_DATABASE_URL=postgres://scrinode:scrinode_dev_password@localhost:5432/scrinode_dev\n',
+  );
+}
+
+/**
+ * The auth schema, as migration 0003 creates it.
+ *
+ * Duplicated here rather than imported: `@scrinode/web` may not depend on
+ * `@scrinode/api` (AGENTS.md §8). A drift between the two would make these
+ * tests pass against a schema production does not have, so
+ * `auth-schema.test.ts` in the API asserts the two agree.
+ */
+const SCHEMA = `
+  CREATE TABLE users (
+    id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    name            varchar(255),
+    email           varchar(255),
+    "emailVerified" timestamptz,
+    image           text
+  );
+
+  CREATE UNIQUE INDEX users_email_unique ON users (email);
+
+  CREATE TABLE accounts (
+    id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    "userId"            uuid NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    type                varchar(255) NOT NULL,
+    provider            varchar(255) NOT NULL,
+    "providerAccountId" varchar(255) NOT NULL,
+    refresh_token       text,
+    access_token        text,
+    expires_at          bigint,
+    id_token            text,
+    scope               text,
+    session_state       text,
+    token_type          text
+  );
+
+  CREATE UNIQUE INDEX accounts_provider_unique
+    ON accounts (provider, "providerAccountId");
+
+  CREATE TABLE sessions (
+    id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    "userId"       uuid NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    expires        timestamptz NOT NULL,
+    "sessionToken" varchar(255) NOT NULL
+  );
+
+  CREATE UNIQUE INDEX sessions_token_unique ON sessions ("sessionToken");
+
+  CREATE TABLE verification_token (
+    identifier text        NOT NULL,
+    expires    timestamptz NOT NULL,
+    token      text        NOT NULL,
+    PRIMARY KEY (identifier, token)
+  );
+`;
+
+describeWithDatabase('Auth.js PostgreSQL adapter against Scrinode\'s schema', () => {
+  const schema = 'test_auth_adapter';
+
+  let pool: Pool;
+  let adapter: ReturnType<typeof PostgresAdapter>;
 
   beforeAll(async () => {
-    mongod = await MongoMemoryServer.create();
-    client = new MongoClient(mongod.getUri());
-    await client.connect();
+    const setup = new Pool({ connectionString, max: 1 });
 
-    adapter = MongoDBAdapter(Promise.resolve(client), { databaseName: 'auth_test' });
-  }, 120_000);
+    try {
+      await setup.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+      await setup.query(`CREATE SCHEMA ${schema}`);
+    } finally {
+      await setup.end();
+    }
+
+    // Unqualified names in the adapter's SQL resolve to this schema.
+    pool = new Pool({
+      connectionString,
+      max: 4,
+      options: `-c search_path=${schema},public`,
+    });
+
+    pool.on('error', () => {
+      // Teardown closes pools abruptly; an idle-client error is noise here
+      // and an unhandled 'error' event would fail the run.
+    });
+
+    await pool.query(SCHEMA);
+
+    adapter = PostgresAdapter(pool);
+  }, 60_000);
 
   afterAll(async () => {
-    await client.close();
-    await mongod.stop();
+    await pool.end();
+
+    const teardown = new Pool({ connectionString, max: 1 });
+
+    try {
+      await teardown.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+    } finally {
+      await teardown.end();
+    }
   });
 
   it('creates and reads a user', async () => {
@@ -42,6 +140,18 @@ describe('Auth.js MongoDB adapter on the mongodb 7 driver', () => {
 
     const fetched = await adapter.getUser!(created.id);
     expect(fetched?.email).toBe('reader@scrinode.com');
+  });
+
+  it('generates a uuid rather than a sequential id', async () => {
+    // The schema departs from Auth.js's documented SERIAL here: a reader id
+    // reaches URLs, and sequential integers make the user base enumerable.
+    const created = await adapter.createUser!({
+      id: '',
+      email: 'uuid@scrinode.com',
+      emailVerified: null,
+    });
+
+    expect(created.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
   });
 
   it('finds a user by email', async () => {
@@ -117,6 +227,41 @@ describe('Auth.js MongoDB adapter on the mongodb 7 driver', () => {
     await adapter.deleteSession!('token-del');
 
     expect(await adapter.getSessionAndUser!('token-del')).toBeNull();
+  });
+
+  it('deletes a user together with their sessions and accounts', async () => {
+    // The adapter deletes the user row *before* its sessions and accounts.
+    // Without ON DELETE CASCADE the foreign keys would reject that first
+    // statement, and deleting an account would be impossible.
+    const user = await adapter.createUser!({
+      id: '',
+      email: 'delete-me@scrinode.com',
+      emailVerified: null,
+    });
+
+    await adapter.linkAccount!({
+      userId: user.id,
+      type: 'oauth',
+      provider: 'google',
+      providerAccountId: 'google-delete',
+    });
+
+    await adapter.createSession!({
+      sessionToken: 'token-cascade',
+      userId: user.id,
+      expires: new Date(Date.now() + 60_000),
+    });
+
+    await adapter.deleteUser!(user.id);
+
+    expect(await adapter.getUser!(user.id)).toBeNull();
+
+    // A session outliving its user would authenticate a deleted account.
+    const { rows } = await pool.query<{ count: string }>(
+      `SELECT count(*) AS count FROM sessions WHERE "userId" = $1`,
+      [user.id],
+    );
+    expect(Number(rows[0]?.count)).toBe(0);
   });
 
   it('stores and consumes a verification token exactly once', async () => {

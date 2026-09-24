@@ -1,14 +1,14 @@
-import { MongoDBAdapter } from '@auth/mongodb-adapter';
+import PostgresAdapter from '@auth/pg-adapter';
 import type { NextAuthOptions } from 'next-auth';
 import EmailProvider from 'next-auth/providers/email';
 import GoogleProvider from 'next-auth/providers/google';
-import { getMongoClient } from './mongo-client';
+import { getPool } from './pg-pool';
 
 /**
  * Reader authentication — AGENTS.md §27.1.
  *
  * This is READER identity only. Admin identity is a separate security domain
- * with its own collections, sessions, cookie and domain (§27.2, §27.3): a
+ * with its own tables, sessions, cookie and domain (§27.2, §27.3): a
  * compromised reader account must never be able to reach the backoffice.
  * Nothing here may be reused for admin auth.
  *
@@ -57,11 +57,11 @@ function buildProviders(): NextAuthOptions['providers'] {
  */
 export function buildAuthOptions(): NextAuthOptions {
   return {
-    // MONGODB_DB is validated at boot; the fallback keeps the adapter's
-    // required-string contract satisfied without a cast.
-    adapter: MongoDBAdapter(getMongoClient(), {
-      databaseName: process.env.MONGODB_DB ?? 'scrinode',
-    }),
+    // The adapter owns `users`, `accounts`, `sessions` and
+    // `verification_token`, created by migration 0003. It issues raw SQL
+    // against those names, so neither the tables nor their camelCase columns
+    // may be renamed.
+    adapter: PostgresAdapter(getPool()),
 
     providers: buildProviders(),
 
