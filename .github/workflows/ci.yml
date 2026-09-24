@@ -1,4 +1,4 @@
-name: CI
+name: CI/CD
 
 on:
   push:
@@ -81,18 +81,17 @@ jobs:
         run: pnpm verify
 
       - name: Confirm database tests actually ran
-        # A skipped integration suite looks identical to a passing one in the
-        # summary. This fails the build if the database was unreachable, so
-        # the suites cannot quietly stop covering anything.
+        # A skipped integration suite looks identical to a passing one in a
+        # CI summary: both are green. This fails the build if any of the four
+        # skipped, so they cannot quietly stop covering anything.
+        #
+        # A script rather than inline shell, so it can be run and proven
+        # outside CI. The previous inline version grepped stdout for output
+        # the JSON reporter writes to a file, so it never matched and failed
+        # unconditionally — including against a healthy database.
         env:
           TEST_DATABASE_URL: postgres://scrinode:scrinode_ci@localhost:5432/scrinode_ci
-        run: |
-          output=$(pnpm --filter @scrinode/api exec vitest run \
-            src/database/migrations/migrations.test.ts --reporter=json 2>/dev/null || true)
-          echo "$output" | grep -q '"numPendingTests":0' || {
-            echo "Database integration tests were skipped. TEST_DATABASE_URL is not reaching Postgres."
-            exit 1
-          }
+        run: node scripts/assert-db-tests-ran.mjs
 
   e2e:
     name: End-to-end
@@ -102,10 +101,10 @@ jobs:
     # from an already-broken build.
     needs: verify
 
-    # Integration tests need a real PostgreSQL with pgvector: there is no
-    # in-process substitute that carries the extension, and a test passing
-    # against a fake engine would be worse than no test. Without this the
-    # database suites skip, which CI must never do silently.
+    # run.mjs creates and drops its own database on this server for each run,
+    # so it connects to `postgres` — the maintenance database — rather than a
+    # fixed one. The image carries pgvector because the apps run migrations
+    # against the database it creates.
     services:
       postgres:
         image: pgvector/pgvector:pg17
@@ -157,3 +156,77 @@ jobs:
           name: playwright-report
           path: apps/e2e/playwright-report/
           retention-days: 7
+
+  deploy:
+    name: Deploy to droplet
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    # Only after both gates pass, and only from main. A pull request must
+    # never reach the droplet, and `github.event_name` is checked as well as
+    # the ref because a `pull_request` run can carry a main-looking ref.
+    needs: [verify, e2e]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    # Serialises deploys. Two overlapping runs would migrate and restart the
+    # same stack concurrently; the migration runner's advisory lock makes
+    # that safe rather than correct. `cancel-in-progress: false` because a
+    # deploy interrupted between migrating and restarting leaves the old code
+    # running against the new schema.
+    concurrency:
+      group: deploy-droplet
+      cancel-in-progress: false
+
+    # Records the deployment in GitHub, and is where the droplet URL and any
+    # required reviewers are configured.
+    environment:
+      name: production
+      url: https://api.scrinode.com
+
+    steps:
+      - name: Deploy over SSH
+        # The droplet builds the image itself. It has the Docker layer cache
+        # and the running stack; shipping an image from here would need a
+        # registry for no benefit at this scale.
+        #
+        # deploy.sh backs up, builds, migrates, restarts and waits for
+        # readiness — the ordering matters and belongs on the droplet, in
+        # version control, not spread across a workflow file.
+        #
+        # This is a third-party action holding DROPLET_SSH_KEY. The tag is a
+        # moving target, so a compromised release would run with that key. It
+        # is pinned to a version rather than a commit SHA for readability;
+        # pin the SHA if that trade stops looking right.
+        #
+        # Limit the blast radius at the other end: give the deploy key its
+        # own unprivileged user, and restrict it in authorized_keys with
+        # `command="/srv/scrinode/infra/deploy.sh",no-port-forwarding` so a
+        # stolen key can deploy and nothing else.
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DROPLET_HOST }}
+          username: ${{ secrets.DROPLET_USER }}
+          key: ${{ secrets.DROPLET_SSH_KEY }}
+          # Longer than the job's own patience would suggest: an image build
+          # plus an HNSW index migration is not fast, and a timeout here
+          # leaves a deploy half-done.
+          command_timeout: 15m
+          script: |
+            set -euo pipefail
+            cd /srv/scrinode
+            git fetch --all
+            git reset --hard ${{ github.sha }}
+            ./infra/deploy.sh
+
+      - name: Report failure
+        if: failure()
+        # The deploy script does not roll back: between migrating and
+        # restarting, the old code is already serving against the new schema,
+        # so the safe response is a human looking at it rather than an
+        # automatic second change.
+        run: |
+          echo "::error::Deploy failed. The droplet may be mid-deploy."
+          echo "Check: ssh to the droplet, then"
+          echo "  docker compose -f /srv/scrinode/docker-compose.prod.yml ps"
+          echo "  docker compose -f /srv/scrinode/docker-compose.prod.yml logs --tail=100 api"
+          echo "Backups are in the postgres_backups volume; restore with infra/postgres/restore.sh"

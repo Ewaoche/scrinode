@@ -5,7 +5,14 @@
     ".env.example"
   ],
   "globalEnv": [
-    "NODE_ENV"
+    "NODE_ENV",
+    "CI"
+  ],
+  "globalPassThroughEnv": [
+    "TEST_DATABASE_URL",
+    "E2E_DATABASE_URL",
+    "DATABASE_URL",
+    "DATABASE_SSL"
   ],
   "tasks": {
     "build": {

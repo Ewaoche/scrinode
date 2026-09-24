@@ -145,12 +145,56 @@ Notes, highlights, collections and workspaces exist nowhere else.
 
 ## Deploying
 
+Automatic on a push to `main`, once `verify` and `e2e` both pass. The
+workflow SSHes in and runs `deploy.sh`; the droplet builds the image itself,
+because it holds the layer cache and the running stack, and shipping an image
+from CI would need a registry for no benefit at this scale.
+
+By hand, when needed:
+
 ```bash
 cd /srv/scrinode && git pull && ./infra/deploy.sh
 ```
 
-Backs up, builds, migrates, restarts, and waits for readiness before
-reporting success.
+Either way it backs up, builds, migrates, restarts, and waits for readiness
+before reporting success.
+
+### Repository secrets
+
+Set these under Settings → Secrets → Actions. Until they exist the deploy job
+fails, which is the correct failure — a silent skip would look like success.
+
+| Secret | Value |
+|---|---|
+| `DROPLET_HOST` | Hostname or IP |
+| `DROPLET_USER` | The deploy user — **not** root |
+| `DROPLET_SSH_KEY` | Private key for that user |
+
+The deploy job is gated on `github.event_name == 'push'` as well as the ref,
+so a pull request cannot reach the droplet, and serialised by a concurrency
+group so two runs cannot migrate the same stack at once.
+
+**Narrow the deploy key.** It is held by a third-party action, so assume it
+can leak. Give it its own unprivileged user and restrict it in
+`authorized_keys`:
+
+```text
+command="/srv/scrinode/infra/deploy.sh",no-port-forwarding,no-agent-forwarding,no-pty ssh-ed25519 AAAA...
+```
+
+A stolen key can then deploy and nothing else.
+
+### When a deploy fails
+
+`deploy.sh` does not roll back. Between the migration and the restart, the
+old code is already serving against the new schema, so an automatic second
+change is more likely to compound the problem than fix it.
+
+```bash
+docker compose -f docker-compose.prod.yml ps
+docker compose -f docker-compose.prod.yml logs --tail=100 api
+./infra/postgres/restore.sh --list
+```
 
 Migrations run as a deliberate step, never on boot. Between the migration and
 the restart, the **old** code serves traffic against the **new** schema —

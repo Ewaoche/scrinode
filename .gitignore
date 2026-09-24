@@ -48,3 +48,8 @@ pnpm-debug.log*
 # `node packages/ingest/dist/cli.js fetch parse`, and the canonical copy
 # lives in object storage, so it is never committed.
 .ingest/
+
+# Vitest's JSON reporter output. Written when --reporter=json is used, which
+# scripts/assert-db-tests-ran.mjs does; it is a build artifact, not a report
+# anyone reads from the repository.
+.vitest/
