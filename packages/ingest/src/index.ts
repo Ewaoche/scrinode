@@ -27,7 +27,8 @@ export {
 } from './layout.js';
 
 export {
-  COLLECTIONS,
+  TABLES,
+  VERSE_COLUMNS,
   VERSE_INDEXES,
   canonicalRef,
   verseDocumentId,
@@ -51,7 +52,7 @@ export {
 } from './pipeline.js';
 
 export {
-  LEDGER_COLLECTION,
+  LEDGER_TABLE,
   isUpToDate,
   reasonToRun,
   runId,
@@ -67,9 +68,12 @@ export {
   PASSAGE_STRIDE,
   PASSAGE_WINDOW,
   PENDING_UNIT_TYPES,
-  RETRIEVAL_COLLECTION,
+  RETRIEVAL_TABLE,
   VECTOR_INDEX_NAME,
-  vectorIndexDefinition,
+  UNIT_COLUMNS,
+  HNSW_EF_SEARCH,
+  toVectorLiteral,
+  distanceToScore,
   type RetrievalUnit,
   type RetrievalUnitType,
 } from './retrieval.js';

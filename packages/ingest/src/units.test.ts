@@ -1,4 +1,3 @@
-import { Binary } from 'mongodb';
 import { describe, expect, it } from 'vitest';
 import { buildChapterUnits, needsEmbedding, textHash, type VerseInput } from './units.js';
 import { EMBEDDING_MODEL, PASSAGE_WINDOW } from './retrieval.js';
@@ -152,9 +151,7 @@ describe('edge cases', () => {
 });
 
 describe('needsEmbedding', () => {
-  // Vectors are stored as BSON BinData rather than arrays of numbers; see
-  // the comment on RetrievalUnit.embedding for why.
-  const vector = Binary.fromFloat32Array(new Float32Array([0.1, 0.2]));
+  const vector = [0.1, 0.2];
 
   const embedded = {
     text: 'Some text.',
@@ -181,7 +178,8 @@ describe('needsEmbedding', () => {
   });
 
   it('re-embeds an empty vector', () => {
-    const empty = Binary.fromFloat32Array(new Float32Array([]));
-    expect(needsEmbedding({ ...embedded, embedding: empty }, EMBEDDING_MODEL)).toBe(true);
+    // A vector that was written but carries no dimensions would be accepted
+    // by the column and match nothing.
+    expect(needsEmbedding({ ...embedded, embedding: [] }, EMBEDDING_MODEL)).toBe(true);
   });
 });

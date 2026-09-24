@@ -1,37 +1,59 @@
 import type { BookId, Canon, CanonicalVerseId, TranslationCode } from '@scrinode/types';
 
 /**
- * MongoDB document shapes for Scripture text.
+ * Row shapes for Scripture text.
  *
  * Verse-level granularity, which follows from decisions already made
  * elsewhere in Scrinode rather than from storage preference:
  *
  * - `CanonicalVerseId` is already the database identity (AGENTS.md §10)
  * - cross-references target verses, not chapters
- * - Atlas Vector Search needs verse-level chunks for Zedek's retrieval (§20)
+ * - retrieval needs verse-level chunks for Zedek (§20)
  * - the Verse Inspector operates on a single verse
  *
- * Chapter documents would have fought all four.
+ * Chapter rows would have fought all four.
  *
- * The cost is roughly a million documents across 34 translations. That is
- * unremarkable for MongoDB provided the indexes match the access patterns,
- * which is what `VERSE_INDEXES` is for.
+ * The cost is roughly a million rows across 34 translations — unremarkable
+ * for Postgres provided the indexes match the access patterns, which is what
+ * `VERSE_INDEXES` is for.
  */
 
-/** Collection names. Kept here so nothing hard-codes a string. */
-export const COLLECTIONS = {
-  verses: 'verses',
+/** Table names. Kept here so nothing hard-codes a string. */
+export const TABLES = {
+  verses: 'translation_texts',
   translations: 'translations',
   sources: 'sources',
 } as const;
 
 /**
+ * Column names for `VerseDocument` fields.
+ *
+ * The interface is camelCase because it is TypeScript; the table is
+ * snake_case because it is Postgres. Declared once so the mapping cannot
+ * drift between writer and reader (AGENTS.md §42).
+ */
+export const VERSE_COLUMNS = {
+  _id: 'id',
+  translation: 'translation',
+  bookId: 'book_id',
+  canon: 'canon',
+  chapter: 'chapter',
+  verse: 'verse',
+  verseEnd: 'verse_end',
+  suffix: 'suffix',
+  ref: 'reference_id',
+  text: 'text',
+  ordinal: 'ordinal',
+  release: 'release',
+} as const;
+
+/**
  * One verse in one translation.
  *
- * `_id` is deterministic: `BSB:ROM.8.28`. Re-importing the same release is
- * therefore idempotent, and a failed import can be re-run without producing
- * duplicates — which matters because these imports are large enough to fail
- * partway.
+ * `_id` is deterministic: `BSB:ROM.8.28`, and is the table's primary key.
+ * Re-importing the same release is therefore idempotent, and a failed import
+ * can be re-run without producing duplicates — which matters because these
+ * imports are large enough to fail partway.
  */
 export interface VerseDocument {
   readonly _id: string;
@@ -124,30 +146,32 @@ export function verseOrdinal(bookOrder: number, chapter: number, verse: number):
 }
 
 /**
- * Indexes the verses collection needs.
+ * Indexes the verse table needs.
  *
  * Declared as data so the migration that creates them and the tests that
- * assert them read from one definition (AGENTS.md §42).
+ * assert them read from one definition (AGENTS.md §42). The migration owns
+ * the DDL; this records what that DDL must cover, in column terms.
  */
 export const VERSE_INDEXES = [
   {
     // The reader's primary access pattern: one chapter in one translation.
-    name: 'translation_book_chapter',
-    key: { translation: 1, bookId: 1, chapter: 1, verse: 1 },
+    name: 'translation_texts_chapter_idx',
+    columns: ['translation', 'book_id', 'chapter', 'verse'],
   },
   {
     // Translation comparison: the same verse across every translation.
-    name: 'ref_translation',
-    key: { ref: 1, translation: 1 },
+    // Served by the unique constraint on (reference_id, translation).
+    name: 'translation_texts_reference_translation',
+    columns: ['reference_id', 'translation'],
   },
   {
     // Ordered reads and ranges crossing book boundaries.
-    name: 'translation_ordinal',
-    key: { translation: 1, ordinal: 1 },
+    name: 'translation_texts_ordinal_idx',
+    columns: ['translation', 'ordinal'],
   },
   {
     // Removing or replacing one release without touching the rest.
-    name: 'translation_release',
-    key: { translation: 1, release: 1 },
+    name: 'translation_texts_release_idx',
+    columns: ['translation', 'release'],
   },
 ] as const;

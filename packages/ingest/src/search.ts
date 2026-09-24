@@ -1,5 +1,12 @@
-import type { Collection } from 'mongodb';
-import { EMBEDDING_MODEL, VECTOR_INDEX_NAME, type RetrievalUnit } from './retrieval.js';
+import type { Pool } from 'pg';
+import {
+  EMBEDDING_MODEL,
+  HNSW_EF_SEARCH,
+  RETRIEVAL_TABLE,
+  distanceToScore,
+  toVectorLiteral,
+  type RetrievalUnit,
+} from './retrieval.js';
 import { embedBatch } from './voyage.js';
 
 /**
@@ -34,13 +41,13 @@ export interface SearchOptions {
   readonly canon?: 'protestant' | 'deuterocanonical';
   readonly limit?: number;
   /**
-   * How many candidates Atlas considers before ranking.
+   * How many graph nodes HNSW visits before ranking.
    *
-   * Higher means better recall and more work. MongoDB suggests roughly ten
-   * to twenty times the limit; below that, relevant hits are missed before
-   * scoring ever happens.
+   * Higher means better recall and more work. Below the requested row count
+   * the index cannot return a full result set; well above it, latency grows
+   * for diminishing recall.
    */
-  readonly numCandidates?: number;
+  readonly efSearch?: number;
   /** Injected in tests so the query shape can be asserted without network. */
   readonly fetchImpl?: typeof fetch;
 }
@@ -53,30 +60,57 @@ export interface SearchHit {
   readonly referenceEnd?: string;
   readonly text: string;
   readonly verseIds?: readonly string[];
-  /** Atlas relevance score. Cosine similarity mapped into 0..1. */
+  /** Cosine similarity in 0..1, converted from pgvector's distance. */
   readonly score: number;
 }
 
-/**
- * Build the `$vectorSearch` filter.
- *
- * Only fields declared as filters on the index may appear here; anything
- * else is rejected at query time rather than ignored.
- */
-function buildFilter(options: SearchOptions): Record<string, unknown> {
-  const filter: Record<string, unknown> = {};
+/** A row as Postgres returns it, before mapping to a hit. */
+interface HitRow {
+  id: string;
+  unit_type: RetrievalUnit['unitType'];
+  translation: string | null;
+  reference_start: string | null;
+  reference_end: string | null;
+  text: string;
+  verse_ids: string[] | null;
+  distance: number | string;
+}
 
-  if (options.translation) filter['translation'] = options.translation.toUpperCase();
-  if (options.unitType) filter['unitType'] = options.unitType;
-  if (options.bookId) filter['bookId'] = options.bookId.toUpperCase();
-  if (options.testament) filter['testament'] = options.testament;
-  if (options.canon) filter['canon'] = options.canon;
+/**
+ * Build the WHERE clause and its parameters.
+ *
+ * Values are always bound as parameters, never interpolated — a filter
+ * reaching this function may have come from a user (§33). The parameter
+ * numbering starts after the query vector, which is always `$1`.
+ */
+function buildFilter(options: SearchOptions): {
+  clause: string;
+  params: unknown[];
+} {
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+
+  const add = (column: string, value: string) => {
+    params.push(value);
+    // +1 because $1 is the query vector.
+    conditions.push(`${column} = $${params.length + 1}`);
+  };
+
+  if (options.translation) add('translation', options.translation.toUpperCase());
+  if (options.unitType) add('unit_type', options.unitType);
+  if (options.bookId) add('book_id', options.bookId.toUpperCase());
+  if (options.testament) add('testament', options.testament);
+  if (options.canon) add('canon', options.canon);
 
   // Never mix vectors from different models: their spaces are unrelated, so
   // scores would be meaningless across them.
-  filter['embeddingModel'] = EMBEDDING_MODEL;
+  add('embedding_model', EMBEDDING_MODEL);
 
-  return filter;
+  // Unembedded rows would otherwise sort last by distance rather than being
+  // excluded, filling a short result set with rows that cannot match.
+  conditions.push('embedding IS NOT NULL');
+
+  return { clause: `WHERE ${conditions.join(' AND ')}`, params };
 }
 
 /**
@@ -88,12 +122,12 @@ function buildFilter(options: SearchOptions): Record<string, unknown> {
  * retrieval bug to introduce and the hardest to notice.
  */
 export async function searchUnits(
-  collection: Collection<RetrievalUnit>,
+  pool: Pool,
   question: string,
   options: SearchOptions,
 ): Promise<SearchHit[]> {
   const limit = options.limit ?? 5;
-  const numCandidates = options.numCandidates ?? Math.max(100, limit * 20);
+  const efSearch = Math.max(options.efSearch ?? HNSW_EF_SEARCH, limit);
 
   const { embeddings } = await embedBatch([question], 'query', {
     apiKey: options.apiKey,
@@ -103,33 +137,62 @@ export async function searchUnits(
 
   if (!queryVector) return [];
 
-  const hits = await collection
-    .aggregate<SearchHit>([
-      {
-        $vectorSearch: {
-          index: VECTOR_INDEX_NAME,
-          path: 'embedding',
-          queryVector,
-          numCandidates,
-          limit,
-          filter: buildFilter(options),
-        },
-      },
-      {
-        $project: {
-          unitType: 1,
-          translation: 1,
-          referenceStart: 1,
-          referenceEnd: 1,
-          text: 1,
-          verseIds: 1,
-          score: { $meta: 'vectorSearchScore' },
-        },
-      },
-    ])
-    .toArray();
+  const { clause, params } = buildFilter(options);
 
-  return hits;
+  // A dedicated connection, because `SET LOCAL` applies to a transaction and
+  // pooled queries may otherwise land on different connections — leaving
+  // ef_search unset for the query that needs it.
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+    await client.query(`SET LOCAL hnsw.ef_search = ${efSearch}`);
+
+    const { rows } = await client.query<HitRow>(
+      `SELECT id,
+              unit_type,
+              translation,
+              reference_start,
+              reference_end,
+              text,
+              verse_ids,
+              embedding <=> $1::halfvec AS distance
+         FROM ${RETRIEVAL_TABLE}
+         ${clause}
+        ORDER BY embedding <=> $1::halfvec
+        LIMIT ${limit}`,
+      [toVectorLiteral(queryVector), ...params],
+    );
+
+    await client.query('COMMIT');
+
+    return rows.map(toHit);
+  } catch (cause) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw cause;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Map a row to a hit.
+ *
+ * `distance` may arrive as a string: `pg` returns some numeric types as text
+ * to avoid precision loss, and a string would silently sort and compare
+ * wrongly.
+ */
+function toHit(row: HitRow): SearchHit {
+  return {
+    _id: row.id,
+    unitType: row.unit_type,
+    ...(row.translation ? { translation: row.translation } : {}),
+    ...(row.reference_start ? { referenceStart: row.reference_start } : {}),
+    ...(row.reference_end ? { referenceEnd: row.reference_end } : {}),
+    text: row.text,
+    ...(row.verse_ids ? { verseIds: row.verse_ids } : {}),
+    score: distanceToScore(Number(row.distance)),
+  };
 }
 
 /**
@@ -139,6 +202,10 @@ export async function searchUnits(
  * gets results. Measured against this corpus, relevant hits score 0.74-0.85
  * and deliberately irrelevant ones ("recipe for chocolate cake", "how to
  * configure a firewall") score 0.62-0.64.
+ *
+ * These were measured on Atlas, and they carry over unchanged: both use
+ * cosine over the same vectors, and `distanceToScore` converts pgvector's
+ * distance back into the similarity Atlas reported.
  *
  * This is a guide for callers, not applied here: the right floor depends on
  * what the caller does with a miss, and Zedek answering "I have nothing

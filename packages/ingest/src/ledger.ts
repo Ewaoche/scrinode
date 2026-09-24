@@ -9,16 +9,16 @@ import type { Manifest } from './layout.js';
  * changed one; answering it from a local file loses the answer when the
  * machine is rebuilt and hides it from anyone else running the scripts.
  *
- * So the ledger lives in MongoDB beside the data it describes. It records the
- * manifest's `archiveSha256`, which is the hash of the publisher's bytes — if
- * that is unchanged, the parsed output is necessarily unchanged too, because
- * parsing is deterministic.
+ * So the ledger lives in Postgres beside the data it describes. It records
+ * the manifest's `archiveSha256`, which is the hash of the publisher's bytes
+ * — if that is unchanged, the parsed output is necessarily unchanged too,
+ * because parsing is deterministic.
  *
  * This is what makes both scripts idempotent: re-running them is a no-op
  * until a source actually changes.
  */
 
-export const LEDGER_COLLECTION = 'ingest_runs';
+export const LEDGER_TABLE = 'ingest_runs';
 
 export type IngestStage = 'upload' | 'load';
 

@@ -165,9 +165,9 @@ export function needsEmbedding(
   unit: Pick<RetrievalUnit, 'embedding' | 'embeddingModel' | 'textHash' | 'text'>,
   model: string,
 ): boolean {
-  // `length()` is the byte length, which includes a header and is never
-  // zero. The dimension count is what matters.
-  if (!unit.embedding || unit.embedding.toFloat32Array().length === 0) return true;
+  // An empty array is a vector that was written but carries no dimensions —
+  // it would be accepted by the column and match nothing.
+  if (!unit.embedding || unit.embedding.length === 0) return true;
   if (unit.embeddingModel !== model) return true;
   if (unit.textHash !== textHash(unit.text)) return true;
   return false;

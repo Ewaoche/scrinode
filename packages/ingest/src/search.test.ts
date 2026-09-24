@@ -1,23 +1,32 @@
+import type { Pool } from 'pg';
 import { describe, expect, it, vi } from 'vitest';
 import { formatRange, searchUnits } from './search.js';
-import { EMBEDDING_DIMENSIONS, EMBEDDING_MODEL, VECTOR_INDEX_NAME } from './retrieval.js';
+import { EMBEDDING_DIMENSIONS, EMBEDDING_MODEL, HNSW_EF_SEARCH } from './retrieval.js';
 
 /**
- * A stub collection capturing the aggregation pipeline, so the query shape
- * can be asserted without a database. The pipeline is what determines
- * whether results are correct, and it is easy to get subtly wrong.
+ * A stub pool capturing the SQL and its parameters, so the query shape can be
+ * asserted without a database. The query is what determines whether results
+ * are correct, and it is easy to get subtly wrong.
  */
-function stubCollection(results: unknown[] = []) {
-  const captured: { pipeline?: unknown[] } = {};
+function stubPool(results: unknown[] = []) {
+  const captured: { sql: string[]; params: unknown[][] } = { sql: [], params: [] };
+
+  const client = {
+    query: (sql: string, params?: unknown[]) => {
+      captured.sql.push(sql);
+      if (params) captured.params.push(params);
+
+      // BEGIN, COMMIT and SET carry no rows; only the search returns any.
+      return Promise.resolve({ rows: sql.includes('SELECT') ? results : [] });
+    },
+    release: () => undefined,
+  };
 
   return {
     captured,
-    collection: {
-      aggregate: (pipeline: unknown[]) => {
-        captured.pipeline = pipeline;
-        return { toArray: async () => results };
-      },
-    },
+    /** The statement that performs the search, rather than BEGIN or SET. */
+    searchSql: () => captured.sql.find((s) => s.includes('SELECT')) ?? '',
+    pool: { connect: () => Promise.resolve(client) } as unknown as Pool,
   };
 }
 
@@ -40,44 +49,46 @@ const embedOnce = () =>
   );
 
 describe('searchUnits', () => {
-  it('queries the index the embedder writes for', async () => {
-    const { captured, collection } = stubCollection();
+  it('orders by cosine distance, which is what the index is built for', async () => {
+    // An index built for cosine cannot serve a query using another operator;
+    // Postgres would silently fall back to a sequential scan.
+    const { pool, searchSql } = stubPool();
 
-    await searchUnits(collection as never, 'a question', {
+    await searchUnits(pool, 'a question', {
       apiKey: 'k',
       fetchImpl: embedOnce() as never,
     });
 
-    const stage = (captured.pipeline?.[0] as Record<string, Record<string, unknown>>)[
-      '$vectorSearch'
-    ];
-
-    expect(stage?.['index']).toBe(VECTOR_INDEX_NAME);
-    expect(stage?.['path']).toBe('embedding');
+    expect(searchSql()).toContain('ORDER BY embedding <=> $1::halfvec');
   });
 
   it('always filters to the current model', async () => {
     // Vectors from different models occupy unrelated spaces; mixing them
     // would produce scores that mean nothing.
-    const { captured, collection } = stubCollection();
+    const { pool, captured, searchSql } = stubPool();
 
-    await searchUnits(collection as never, 'q', {
-      apiKey: 'k',
-      fetchImpl: embedOnce() as never,
-    });
+    await searchUnits(pool, 'q', { apiKey: 'k', fetchImpl: embedOnce() as never });
 
-    const stage = (captured.pipeline?.[0] as Record<string, Record<string, unknown>>)[
-      '$vectorSearch'
-    ];
-    const filter = stage?.['filter'] as Record<string, unknown>;
-
-    expect(filter['embeddingModel']).toBe(EMBEDDING_MODEL);
+    expect(searchSql()).toContain('embedding_model = $');
+    expect(captured.params.flat()).toContain(EMBEDDING_MODEL);
   });
 
-  it('passes through the filters the index declares', async () => {
-    const { captured, collection } = stubCollection();
+  it('excludes rows with no vector', async () => {
+    // They would otherwise sort last rather than being excluded, filling a
+    // short result set with rows that cannot match.
+    const { pool, searchSql } = stubPool();
 
-    await searchUnits(collection as never, 'q', {
+    await searchUnits(pool, 'q', { apiKey: 'k', fetchImpl: embedOnce() as never });
+
+    expect(searchSql()).toContain('embedding IS NOT NULL');
+  });
+
+  it('binds filters as parameters rather than interpolating them', async () => {
+    // A filter may have come from a user. Interpolation here would be an
+    // injection hole no upstream validation could close.
+    const { pool, captured, searchSql } = stubPool();
+
+    await searchUnits(pool, 'q', {
       apiKey: 'k',
       translation: 'bsb',
       unitType: 'passage',
@@ -85,60 +96,109 @@ describe('searchUnits', () => {
       fetchImpl: embedOnce() as never,
     });
 
-    const stage = (captured.pipeline?.[0] as Record<string, Record<string, unknown>>)[
-      '$vectorSearch'
-    ];
-    const filter = stage?.['filter'] as Record<string, unknown>;
+    const params = captured.params.flat();
 
-    // Upper-cased to match how documents store them.
-    expect(filter['translation']).toBe('BSB');
-    expect(filter['bookId']).toBe('ROM');
-    expect(filter['unitType']).toBe('passage');
+    // Upper-cased to match how rows store them.
+    expect(params).toContain('BSB');
+    expect(params).toContain('ROM');
+    expect(params).toContain('passage');
+
+    expect(searchSql()).not.toContain('BSB');
   });
 
-  it('considers far more candidates than it returns', async () => {
-    // Too few candidates and relevant hits are discarded before scoring.
-    const { captured, collection } = stubCollection();
+  it('raises ef_search above the pgvector default for recall', async () => {
+    // The default of 40 measurably drops relevant hits at this corpus size,
+    // and a search that misses the passage is not worth running.
+    const { pool, captured } = stubPool();
 
-    await searchUnits(collection as never, 'q', {
+    await searchUnits(pool, 'q', { apiKey: 'k', fetchImpl: embedOnce() as never });
+
+    expect(captured.sql.some((s) => s.includes(`SET LOCAL hnsw.ef_search = ${HNSW_EF_SEARCH}`))).toBe(
+      true,
+    );
+  });
+
+  it('never sets ef_search below the number of rows requested', async () => {
+    // The index cannot return more rows than it visits.
+    const { pool, captured } = stubPool();
+
+    await searchUnits(pool, 'q', {
       apiKey: 'k',
-      limit: 5,
+      limit: 500,
+      efSearch: 10,
       fetchImpl: embedOnce() as never,
     });
 
-    const stage = (captured.pipeline?.[0] as Record<string, Record<string, unknown>>)[
-      '$vectorSearch'
-    ];
-
-    expect(stage?.['limit']).toBe(5);
-    expect(stage?.['numCandidates'] as number).toBeGreaterThanOrEqual(100);
+    expect(captured.sql.some((s) => s.includes('SET LOCAL hnsw.ef_search = 500'))).toBe(true);
   });
 
-  it('projects the relevance score', async () => {
-    const { captured, collection } = stubCollection();
+  it('runs in a transaction, because SET LOCAL needs one', async () => {
+    // Outside a transaction SET LOCAL does nothing, and pooled queries could
+    // land on a different connection than the one it was set on.
+    const { pool, captured } = stubPool();
 
-    await searchUnits(collection as never, 'q', {
+    await searchUnits(pool, 'q', { apiKey: 'k', fetchImpl: embedOnce() as never });
+
+    expect(captured.sql[0]).toBe('BEGIN');
+    expect(captured.sql).toContain('COMMIT');
+  });
+
+  it('converts distance into the similarity score callers expect', async () => {
+    // pgvector returns distance, Atlas returned similarity, and every
+    // measured threshold is in similarity.
+    const { pool } = stubPool([
+      {
+        id: 'u1',
+        unit_type: 'passage',
+        translation: 'BSB',
+        reference_start: 'ROM.8.28',
+        reference_end: 'ROM.8.30',
+        text: 'And we know...',
+        verse_ids: ['BSB:ROM.8.28'],
+        distance: 0.2,
+      },
+    ]);
+
+    const [hit] = await searchUnits(pool, 'q', {
       apiKey: 'k',
       fetchImpl: embedOnce() as never,
     });
 
-    const project = (captured.pipeline?.[1] as Record<string, Record<string, unknown>>)[
-      '$project'
-    ];
+    expect(hit?.score).toBeCloseTo(0.8);
+  });
 
-    expect(project?.['score']).toEqual({ $meta: 'vectorSearchScore' });
+  it('parses a distance returned as a string', async () => {
+    // `pg` returns some numeric types as text to avoid precision loss, and a
+    // string would sort and compare wrongly.
+    const { pool } = stubPool([
+      {
+        id: 'u1',
+        unit_type: 'verse',
+        translation: 'BSB',
+        reference_start: 'ROM.8.28',
+        reference_end: 'ROM.8.28',
+        text: 'text',
+        verse_ids: null,
+        distance: '0.25',
+      },
+    ]);
+
+    const [hit] = await searchUnits(pool, 'q', {
+      apiKey: 'k',
+      fetchImpl: embedOnce() as never,
+    });
+
+    expect(hit?.score).toBeCloseTo(0.75);
+    expect(typeof hit?.score).toBe('number');
   });
 
   it('embeds the question as a query, not a document', async () => {
     // Voyage prepends a different instruction for each. Mismatching them is
     // the easiest retrieval bug to introduce and the hardest to notice.
     const fetchImpl = embedOnce();
-    const { collection } = stubCollection();
+    const { pool } = stubPool();
 
-    await searchUnits(collection as never, 'q', {
-      apiKey: 'k',
-      fetchImpl: fetchImpl as never,
-    });
+    await searchUnits(pool, 'q', { apiKey: 'k', fetchImpl: fetchImpl as never });
 
     const body = JSON.parse((fetchImpl.mock.calls[0]?.[1] as RequestInit).body as string);
     expect(body.input_type).toBe('query');

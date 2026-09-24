@@ -22,21 +22,24 @@ import {
   type ArchiveEntry,
 } from './pipeline.js';
 import { latestPointerPath, releasePaths, type Manifest } from './layout.js';
-import { COLLECTIONS, VERSE_INDEXES, type VerseDocument } from './documents.js';
+import { TABLES, type VerseDocument } from './documents.js';
 import {
   DERIVABLE_UNIT_TYPES,
   EMBEDDING_DIMENSIONS,
   EMBEDDING_MODEL,
-  RETRIEVAL_COLLECTION,
+  HNSW_EF_SEARCH,
+  RETRIEVAL_TABLE,
   VECTOR_INDEX_NAME,
-  vectorIndexDefinition,
+  toVectorLiteral,
   type RetrievalUnit,
 } from './retrieval.js';
+import type { Pool } from 'pg';
+import { batchSizeFor, openPool, valuesClause } from './db.js';
 import { buildChapterUnits, needsEmbedding, type VerseInput } from './units.js';
 import { EMBED_BATCH_SIZE, embedBatch } from './voyage.js';
 import { formatRange, searchUnits } from './search.js';
 import {
-  LEDGER_COLLECTION,
+  LEDGER_TABLE,
   isUpToDate,
   reasonToRun,
   runId,
@@ -52,7 +55,7 @@ import {
  *   fetch   download publisher archives to a local staging tree
  *   parse   USFM to verse JSON, with manifests and validation
  *   upload  staging tree to DigitalOcean Spaces
- *   load    verse documents into MongoDB
+ *   load    verse rows into Postgres
  *
  * Separate stages because they fail differently and cost differently.
  * Downloading 34 archives is slow and network-bound; parsing is fast and
@@ -143,55 +146,110 @@ async function openLedger(): Promise<{
   markFailed: (manifest: Manifest, stage: IngestStage, error: string) => Promise<void>;
   close: () => Promise<void>;
 }> {
-  const uri = process.env.MONGODB_URI;
-  if (!uri) fail('Tracking needs MONGODB_URI in the environment.');
-
-  const { MongoClient } = await import('mongodb');
-  const client = new MongoClient(uri);
-  await client.connect();
-
-  const collection = client
-    .db(process.env.MONGODB_DB ?? 'scrinode')
-    .collection<IngestRun>(LEDGER_COLLECTION);
-
+  const pool = openPool('Tracking', fail);
   const host = process.env.COMPUTERNAME ?? process.env.HOSTNAME ?? 'unknown';
 
   return {
-    read: (translation, release, stage) =>
-      collection.findOne({ _id: runId(translation, release, stage) }),
+    read: async (translation, release, stage) => {
+      const { rows } = await pool.query<LedgerRow>(
+        `SELECT * FROM ${LEDGER_TABLE} WHERE id = $1`,
+        [runId(translation, release, stage)],
+      );
+
+      const row = rows[0];
+      return row ? toRun(row) : null;
+    },
 
     begin: async (manifest, stage) => {
-      const id = runId(manifest.translation, manifest.release, stage);
-      await collection.replaceOne(
-        { _id: id },
-        {
-          translation: manifest.translation,
-          release: manifest.release,
+      // ON CONFLICT rather than delete-then-insert: a retry must leave no
+      // window in which the row is absent, or a concurrent status read sees
+      // "never run" for work that is in progress.
+      await pool.query(
+        `INSERT INTO ${LEDGER_TABLE}
+           (id, translation, release, stage, manifest_sha256, status, started_at, host)
+         VALUES ($1, $2, $3, $4, $5, 'running', now(), $6)
+         ON CONFLICT (id) DO UPDATE SET
+           manifest_sha256 = EXCLUDED.manifest_sha256,
+           status          = 'running',
+           started_at      = now(),
+           completed_at    = NULL,
+           error           = NULL,
+           host            = EXCLUDED.host`,
+        [
+          runId(manifest.translation, manifest.release, stage),
+          manifest.translation,
+          manifest.release,
           stage,
-          archiveSha256: manifest.archiveSha256,
-          status: 'running',
-          startedAt: new Date(),
+          manifest.archiveSha256,
           host,
-        },
-        { upsert: true },
+        ],
       );
     },
 
     finish: async (manifest, stage, counts) => {
-      await collection.updateOne(
-        { _id: runId(manifest.translation, manifest.release, stage) },
-        { $set: { status: 'completed', completedAt: new Date(), ...counts } },
+      await pool.query(
+        `UPDATE ${LEDGER_TABLE}
+            SET status       = 'completed',
+                completed_at = now(),
+                error        = NULL,
+                object_count = COALESCE($2, object_count),
+                verse_count  = COALESCE($3, verse_count),
+                book_count   = COALESCE($4, book_count)
+          WHERE id = $1`,
+        [
+          runId(manifest.translation, manifest.release, stage),
+          counts.objectCount ?? null,
+          counts.verseCount ?? null,
+          counts.bookCount ?? null,
+        ],
       );
     },
 
     markFailed: async (manifest, stage, error) => {
-      await collection.updateOne(
-        { _id: runId(manifest.translation, manifest.release, stage) },
-        { $set: { status: 'failed', completedAt: new Date(), error } },
+      await pool.query(
+        `UPDATE ${LEDGER_TABLE}
+            SET status = 'failed', completed_at = now(), error = $2
+          WHERE id = $1`,
+        [runId(manifest.translation, manifest.release, stage), error],
       );
     },
 
-    close: () => client.close(),
+    close: () => pool.end(),
+  };
+}
+
+/** A ledger row as Postgres returns it. */
+interface LedgerRow {
+  id: string;
+  translation: string;
+  release: string;
+  stage: IngestStage;
+  manifest_sha256: string;
+  status: IngestRun['status'];
+  started_at: Date;
+  completed_at: Date | null;
+  object_count: number | null;
+  verse_count: number | null;
+  book_count: number | null;
+  error: string | null;
+  host: string | null;
+}
+
+function toRun(row: LedgerRow): IngestRun {
+  return {
+    _id: row.id,
+    translation: row.translation,
+    release: row.release,
+    stage: row.stage,
+    archiveSha256: row.manifest_sha256,
+    status: row.status,
+    startedAt: row.started_at,
+    ...(row.completed_at ? { completedAt: row.completed_at } : {}),
+    ...(row.object_count !== null ? { objectCount: row.object_count } : {}),
+    ...(row.verse_count !== null ? { verseCount: row.verse_count } : {}),
+    ...(row.book_count !== null ? { bookCount: row.book_count } : {}),
+    ...(row.error ? { error: row.error } : {}),
+    ...(row.host ? { host: row.host } : {}),
   };
 }
 
@@ -438,27 +496,15 @@ async function loadStage(
   registeredOnly: boolean,
   force: boolean,
 ): Promise<void> {
-  const uri = process.env.MONGODB_URI;
-  if (!uri) fail('Load needs MONGODB_URI in the environment.');
-
-  const { MongoClient } = await import('mongodb');
-  const client = new MongoClient(uri);
+  const pool = openPool('Load', fail);
   const ledger = await openLedger();
 
   let loaded = 0;
   let skipped = 0;
 
   try {
-    await client.connect();
-    const db = client.db(process.env.MONGODB_DB ?? 'scrinode');
-    const verses = db.collection<VerseDocument>(COLLECTIONS.verses);
-
-    for (const index of VERSE_INDEXES) {
-      await verses.createIndex(index.key, { name: index.name });
-    }
-
     const selected = registeredOnly ? sources.filter((s) => s.registered) : sources;
-    log(`Loading ${selected.length} translation(s) into MongoDB`);
+    log(`Loading ${selected.length} translation(s) into Postgres`);
 
     for (const source of selected) {
       const paths = releasePaths(source.code, source.release);
@@ -480,10 +526,11 @@ async function loadStage(
 
       await ledger.begin(manifest, 'load');
       let written = 0;
+      let staleRemoved = 0;
 
       try {
-        // One book at a time: a whole Bible of verse documents is large
-        // enough that a single bulk write risks memory and a long lock.
+        // One book at a time: a whole Bible of verse rows is large enough
+        // that a single statement risks memory and a long transaction.
         for (const book of manifest.books) {
           const parsed = JSON.parse(
             await readFile(join(STAGING, paths.json(book.bookId)), 'utf8'),
@@ -500,9 +547,8 @@ async function loadStage(
 
           // The manifest's release is authoritative, not the one pinned in
           // sources.ts: it describes the bytes that were actually parsed. If
-          // the two disagree, documents would be written under one release
-          // and then deleted by the stale sweep below, which expects the
-          // other.
+          // the two disagree, rows would be written under one release and
+          // then deleted by the stale sweep below, which expects the other.
           const documents = toVerseDocuments(source.code, manifest.release, [
             {
               book: { bookId: parsed.bookId, verses: parsed.verses },
@@ -516,48 +562,15 @@ async function loadStage(
 
           if (documents.length === 0) continue;
 
-          // Upserts keyed on the deterministic _id, so a re-run repairs
-          // rather than duplicates and a partial failure is safe to resume.
-          await verses.bulkWrite(
-            documents.map((doc) => ({
-              replaceOne: { filter: { _id: doc._id }, replacement: doc, upsert: true },
-            })),
-            { ordered: false },
-          );
-
-          written += documents.length;
+          written += await insertVerses(pool, documents);
         }
 
         // Verses from an earlier release of the same translation that this
         // release no longer contains. Left behind they would be served as
         // current text.
-        const stale = await verses.deleteMany({
-          translation: manifest.translation as VerseDocument['translation'],
-          release: { $ne: manifest.release },
-        });
+        staleRemoved = await deleteStaleVerses(pool, manifest);
 
-        await db.collection<{ _id: string }>(COLLECTIONS.translations).replaceOne(
-          { _id: `${manifest.translation}:${manifest.release}` },
-          {
-            code: manifest.translation,
-            name: manifest.translationName,
-            release: manifest.release,
-            books: manifest.books.map((b) => b.bookId),
-            bookCount: manifest.totals.books,
-            chapterCount: manifest.totals.chapters,
-            verseCount: manifest.totals.verses,
-            licenceName: manifest.licenceName,
-            licenceUrl: manifest.licenceUrl,
-            rightsHolder: manifest.rightsHolder,
-            sourceUrl: manifest.sourceUrl,
-            archiveSha256: manifest.archiveSha256,
-            importedAt: new Date(),
-            // Loading is not permission. Only translations registered in
-            // translations.ts may be offered, and isAvailable() is the gate.
-            available: source.registered,
-          },
-          { upsert: true },
-        );
+        await upsertTranslation(pool, manifest, source.registered);
 
         await ledger.finish(manifest, 'load', {
           verseCount: written,
@@ -567,7 +580,7 @@ async function loadStage(
         loaded += 1;
         log(
           `  ${source.code.padEnd(10)} ${String(written).padStart(6)} verses` +
-            (stale.deletedCount > 0 ? `  (${stale.deletedCount} stale removed)` : '') +
+            (staleRemoved > 0 ? `  (${staleRemoved} stale removed)` : '') +
             `  (${reasonToRun(previous, manifest)})`,
         );
       } catch (error) {
@@ -578,12 +591,150 @@ async function loadStage(
       }
     }
 
-    log(`
-${loaded} loaded, ${skipped} already current.`);
+    log(`\n${loaded} loaded, ${skipped} already current.`);
   } finally {
     await ledger.close();
-    await client.close();
+    await pool.end();
   }
+}
+
+/** Columns written per verse row, in the order `insertVerses` supplies them. */
+const VERSE_INSERT_COLUMNS = [
+  'id',
+  'translation',
+  'reference_id',
+  'book_id',
+  'canon',
+  'chapter',
+  'verse',
+  'verse_end',
+  'suffix',
+  'text',
+  'ordinal',
+  'release',
+] as const;
+
+/**
+ * Insert or replace verse rows.
+ *
+ * `ON CONFLICT (id) DO UPDATE` keyed on the deterministic id, so a re-run
+ * repairs rather than duplicates and a partial failure is safe to resume.
+ * This is the replacement for MongoDB's upserting `bulkWrite`.
+ */
+async function insertVerses(
+  pool: Pool,
+  documents: readonly VerseDocument[],
+): Promise<number> {
+  const perBatch = batchSizeFor(VERSE_INSERT_COLUMNS.length);
+  let written = 0;
+
+  for (let i = 0; i < documents.length; i += perBatch) {
+    const batch = documents.slice(i, i + perBatch);
+
+    const { placeholders, params } = valuesClause(
+      batch.map((doc) => [
+        doc._id,
+        doc.translation,
+        doc.ref,
+        doc.bookId,
+        doc.canon,
+        doc.chapter,
+        doc.verse,
+        doc.verseEnd ?? null,
+        doc.suffix ?? null,
+        doc.text,
+        doc.ordinal,
+        doc.release,
+      ]),
+    );
+
+    const { rowCount } = await pool.query(
+      `INSERT INTO ${TABLES.verses} (${VERSE_INSERT_COLUMNS.join(', ')})
+       VALUES ${placeholders}
+       ON CONFLICT (id) DO UPDATE SET
+         translation  = EXCLUDED.translation,
+         reference_id = EXCLUDED.reference_id,
+         book_id      = EXCLUDED.book_id,
+         canon        = EXCLUDED.canon,
+         chapter      = EXCLUDED.chapter,
+         verse        = EXCLUDED.verse,
+         verse_end    = EXCLUDED.verse_end,
+         suffix       = EXCLUDED.suffix,
+         text         = EXCLUDED.text,
+         ordinal      = EXCLUDED.ordinal,
+         release      = EXCLUDED.release`,
+      params,
+    );
+
+    written += rowCount ?? 0;
+  }
+
+  return written;
+}
+
+/**
+ * Remove verses of this translation belonging to any other release.
+ *
+ * The manifest's release is authoritative. An earlier version of this sweep
+ * compared against a release taken from elsewhere, matched every row it had
+ * just written, and emptied the collection — so where that value comes from
+ * matters more than it looks.
+ */
+async function deleteStaleVerses(pool: Pool, manifest: Manifest): Promise<number> {
+  const { rowCount } = await pool.query(
+    `DELETE FROM ${TABLES.verses} WHERE translation = $1 AND release <> $2`,
+    [manifest.translation, manifest.release],
+  );
+
+  return rowCount ?? 0;
+}
+
+/** Record what is loaded, one row per translation release. */
+async function upsertTranslation(
+  pool: Pool,
+  manifest: Manifest,
+  registered: boolean,
+): Promise<void> {
+  await pool.query(
+    `INSERT INTO ${TABLES.translations}
+       (id, code, name, release, books, book_count, chapter_count, verse_count,
+        licence_name, licence_url, rights_holder, source_url, archive_sha256,
+        imported_at, available)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, now(), $14)
+     ON CONFLICT (id) DO UPDATE SET
+       code           = EXCLUDED.code,
+       name           = EXCLUDED.name,
+       release        = EXCLUDED.release,
+       books          = EXCLUDED.books,
+       book_count     = EXCLUDED.book_count,
+       chapter_count  = EXCLUDED.chapter_count,
+       verse_count    = EXCLUDED.verse_count,
+       licence_name   = EXCLUDED.licence_name,
+       licence_url    = EXCLUDED.licence_url,
+       rights_holder  = EXCLUDED.rights_holder,
+       source_url     = EXCLUDED.source_url,
+       archive_sha256 = EXCLUDED.archive_sha256,
+       imported_at    = now(),
+       available      = EXCLUDED.available`,
+    [
+      `${manifest.translation}:${manifest.release}`,
+      manifest.translation,
+      manifest.translationName,
+      manifest.release,
+      manifest.books.map((b) => b.bookId),
+      manifest.totals.books,
+      manifest.totals.chapters,
+      manifest.totals.verses,
+      manifest.licenceName,
+      manifest.licenceUrl,
+      manifest.rightsHolder,
+      manifest.sourceUrl,
+      manifest.archiveSha256,
+      // Loading is not permission. Only translations registered in
+      // translations.ts may be offered, and isAvailable() is the gate.
+      registered,
+    ],
+  );
 }
 
 /**
@@ -598,46 +749,70 @@ ${loaded} loaded, ${skipped} already current.`);
  * has not changed.
  */
 async function unitsStage(sources: readonly BibleSource[], registeredOnly: boolean): Promise<void> {
-  const uri = process.env.MONGODB_URI;
-  if (!uri) fail('Building units needs MONGODB_URI in the environment.');
-
-  const { MongoClient } = await import('mongodb');
-  const client = new MongoClient(uri);
+  const pool = openPool('Building units', fail);
 
   try {
-    await client.connect();
-    const db = client.db(process.env.MONGODB_DB ?? 'scrinode');
-    const verses = db.collection<VerseInput & { translation: string }>(COLLECTIONS.verses);
-    const units = db.collection<RetrievalUnit>(RETRIEVAL_COLLECTION);
-
-    // Finding unembedded work must not scan the collection.
-    await units.createIndex({ embeddingModel: 1, unitType: 1 }, { name: 'model_type' });
-    await units.createIndex({ translation: 1, unitType: 1 }, { name: 'translation_type' });
-
     const selected = registeredOnly ? sources.filter((s) => s.registered) : sources;
     log(`Building retrieval units for ${selected.length} translation(s)`);
     log(`Types: ${DERIVABLE_UNIT_TYPES.join(', ')}`);
 
     for (const source of selected) {
       const code = source.code.toUpperCase();
-      const loaded = await verses.countDocuments({ translation: code });
+
+      const { rows: counted } = await pool.query<{ count: string }>(
+        `SELECT count(*) AS count FROM ${TABLES.verses} WHERE translation = $1`,
+        [code],
+      );
+      const loaded = Number(counted[0]?.count ?? 0);
 
       if (loaded === 0) {
         log(`  ${source.code.padEnd(10)} SKIP (no verses loaded)`);
         continue;
       }
 
-      const books = (await verses.distinct('bookId', { translation: code })).sort();
+      const { rows: bookRows } = await pool.query<{ book_id: string }>(
+        `SELECT DISTINCT book_id FROM ${TABLES.verses}
+          WHERE translation = $1
+          ORDER BY book_id`,
+        [code],
+      );
+
       let written = 0;
 
-      for (const bookId of books) {
-        const bookVerses = await verses
-          .find({ translation: code, bookId })
-          .sort({ ordinal: 1 })
-          .toArray();
+      for (const { book_id: bookId } of bookRows) {
+        const { rows: bookVerses } = await pool.query<{
+          id: string;
+          book_id: string;
+          chapter: number;
+          verse: number;
+          suffix: string | null;
+          text: string;
+          ordinal: string;
+          canon: string;
+        }>(
+          `SELECT id, book_id, chapter, verse, suffix, text, ordinal, canon
+             FROM ${TABLES.verses}
+            WHERE translation = $1 AND book_id = $2
+            ORDER BY ordinal`,
+          [code, bookId],
+        );
 
         const byChapter = new Map<number, VerseInput[]>();
-        for (const verse of bookVerses) {
+
+        for (const row of bookVerses) {
+          const verse: VerseInput = {
+            _id: row.id,
+            bookId: row.book_id,
+            chapter: row.chapter,
+            verse: row.verse,
+            ...(row.suffix ? { suffix: row.suffix } : {}),
+            text: row.text,
+            // bigint arrives as a string; leaving it as one would sort
+            // lexicographically and scramble verse order.
+            ordinal: Number(row.ordinal),
+            ...(row.canon ? { canon: row.canon as NonNullable<VerseInput['canon']> } : {}),
+          };
+
           const list = byChapter.get(verse.chapter) ?? [];
           list.push(verse);
           byChapter.set(verse.chapter, list);
@@ -661,26 +836,108 @@ async function unitsStage(sources: readonly BibleSource[], registeredOnly: boole
 
         if (batch.length === 0) continue;
 
-        // $set leaves unnamed fields alone, so rebuilding units after an
-        // embedding run keeps their vectors.
-        await units.bulkWrite(
-          batch.map((unit) => ({
-            updateOne: { filter: { _id: unit._id }, update: { $set: unit }, upsert: true },
-          })),
-          { ordered: false },
-        );
-
-        written += batch.length;
+        written += await upsertUnits(pool, batch);
       }
 
       log(`  ${source.code.padEnd(10)} ${String(written).padStart(7)} units from ${loaded} verses`);
     }
 
-    const total = await units.countDocuments();
-    log(`\n${total} retrieval units in ${RETRIEVAL_COLLECTION}.`);
+    const { rows } = await pool.query<{ count: string }>(
+      `SELECT count(*) AS count FROM ${RETRIEVAL_TABLE}`,
+    );
+
+    log(`\n${Number(rows[0]?.count ?? 0)} retrieval units in ${RETRIEVAL_TABLE}.`);
   } finally {
-    await client.close();
+    await pool.end();
   }
+}
+
+/** Columns written per unit, in the order `upsertUnits` supplies them. */
+const UNIT_INSERT_COLUMNS = [
+  'id',
+  'unit_type',
+  'translation',
+  'book_id',
+  'canon',
+  'testament',
+  'chapter',
+  'reference_start',
+  'reference_end',
+  'text',
+  'verse_ids',
+  'language',
+  'ordinal',
+  'source_id',
+  'release',
+  'text_hash',
+] as const;
+
+/**
+ * Insert or update retrieval units, preserving existing vectors.
+ *
+ * The conflict clause names every column **except** `embedding`,
+ * `embedding_model` and `embedded_at`. Rebuilding units after an embedding
+ * run must not discard work that was paid for per token, and a blanket
+ * `SET (...) = (EXCLUDED.*)` would silently null all three — the failure
+ * would look like nothing more than an unexpectedly large next embed run.
+ *
+ * Text that actually changed is still re-embedded: `text_hash` is updated
+ * here, and `needsEmbedding` compares it against the stored vector's text.
+ */
+async function upsertUnits(pool: Pool, units: readonly RetrievalUnit[]): Promise<number> {
+  const perBatch = batchSizeFor(UNIT_INSERT_COLUMNS.length);
+  let written = 0;
+
+  for (let i = 0; i < units.length; i += perBatch) {
+    const batch = units.slice(i, i + perBatch);
+
+    const { placeholders, params } = valuesClause(
+      batch.map((unit) => [
+        unit._id,
+        unit.unitType,
+        unit.translation ?? null,
+        unit.bookId ?? null,
+        unit.canon ?? null,
+        unit.testament ?? null,
+        unit.chapter ?? null,
+        unit.referenceStart ?? null,
+        unit.referenceEnd ?? null,
+        unit.text,
+        unit.verseIds ? [...unit.verseIds] : null,
+        unit.language,
+        unit.ordinal ?? null,
+        unit.sourceId,
+        unit.release ?? null,
+        unit.textHash ?? null,
+      ]),
+    );
+
+    const { rowCount } = await pool.query(
+      `INSERT INTO ${RETRIEVAL_TABLE} (${UNIT_INSERT_COLUMNS.join(', ')})
+       VALUES ${placeholders}
+       ON CONFLICT (id) DO UPDATE SET
+         unit_type       = EXCLUDED.unit_type,
+         translation     = EXCLUDED.translation,
+         book_id         = EXCLUDED.book_id,
+         canon           = EXCLUDED.canon,
+         testament       = EXCLUDED.testament,
+         chapter         = EXCLUDED.chapter,
+         reference_start = EXCLUDED.reference_start,
+         reference_end   = EXCLUDED.reference_end,
+         text            = EXCLUDED.text,
+         verse_ids       = EXCLUDED.verse_ids,
+         language        = EXCLUDED.language,
+         ordinal         = EXCLUDED.ordinal,
+         source_id       = EXCLUDED.source_id,
+         release         = EXCLUDED.release,
+         text_hash       = EXCLUDED.text_hash`,
+      params,
+    );
+
+    written += rowCount ?? 0;
+  }
+
+  return written;
 }
 
 /**
@@ -696,9 +953,6 @@ async function embedStage(
   batchSize: number,
   scope: { books?: readonly string[]; unitType?: string } = {},
 ): Promise<void> {
-  const uri = process.env.MONGODB_URI;
-  if (!uri) fail('Embedding needs MONGODB_URI in the environment.');
-
   const apiKey = process.env.VOYAGE_API_KEY;
   if (!apiKey) {
     fail(
@@ -707,30 +961,39 @@ async function embedStage(
     );
   }
 
-  const { Binary, MongoClient } = await import('mongodb');
-  const client = new MongoClient(uri);
+  const pool = openPool('Embedding', fail);
 
   try {
-    await client.connect();
-    const db = client.db(process.env.MONGODB_DB ?? 'scrinode');
-    const units = db.collection<RetrievalUnit>(RETRIEVAL_COLLECTION);
+    // Without a scope the embedder works in table order, which for a partial
+    // run means one book rather than a useful spread. Narrowing by book or
+    // unit type is also how a single correction gets re-embedded without
+    // paying for the whole corpus again.
+    const conditions: string[] = [];
+    const params: unknown[] = [];
 
-    // Without a scope the embedder works in insertion order, which for a
-    // partial run means one book rather than a useful spread. Narrowing by
-    // book or unit type is also how a single correction gets re-embedded
-    // without paying for the whole corpus again.
-    const scoped: Record<string, unknown> = {};
-    if (scope.books?.length) scoped['bookId'] = { $in: scope.books };
-    if (scope.unitType) scoped['unitType'] = scope.unitType;
+    if (scope.books?.length) {
+      params.push([...scope.books]);
+      conditions.push(`book_id = ANY($${params.length})`);
+    }
 
-    const pending = force
-      ? scoped
-      : {
-          ...scoped,
-          $or: [{ embedding: { $exists: false } }, { embeddingModel: { $ne: EMBEDDING_MODEL } }],
-        };
+    if (scope.unitType) {
+      params.push(scope.unitType);
+      conditions.push(`unit_type = $${params.length}`);
+    }
 
-    const outstanding = await units.countDocuments(pending);
+    if (!force) {
+      params.push(EMBEDDING_MODEL);
+      conditions.push(`(embedding IS NULL OR embedding_model IS DISTINCT FROM $${params.length})`);
+    }
+
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const { rows: counted } = await pool.query<{ count: string }>(
+      `SELECT count(*) AS count FROM ${RETRIEVAL_TABLE} ${where}`,
+      params,
+    );
+    const outstanding = Number(counted[0]?.count ?? 0);
+
     if (outstanding === 0) {
       log('Nothing to embed. Every unit has a current vector.');
       return;
@@ -746,18 +1009,49 @@ async function embedStage(
 
     while (embedded < target) {
       const remaining = target - embedded;
-      const batch = await units
-        .find(pending)
-        .limit(Math.min(batchSize, remaining))
-        .toArray();
+
+      const { rows: batch } = await pool.query<{
+        id: string;
+        text: string;
+        text_hash: string | null;
+        embedding_model: string | null;
+        has_embedding: boolean;
+      }>(
+        `SELECT id,
+                text,
+                text_hash,
+                embedding_model,
+                embedding IS NOT NULL AS has_embedding
+           FROM ${RETRIEVAL_TABLE}
+           ${where}
+          ORDER BY id
+          LIMIT ${Math.min(batchSize, remaining)}`,
+        params,
+      );
 
       if (batch.length === 0) break;
 
-      // The Mongo query finds units with no vector or an old model, but it
-      // cannot compare a text hash. A unit whose text changed under an
-      // existing vector is caught here instead, and skipping it silently
-      // would leave a stale embedding serving current text.
-      const stale = batch.filter((unit) => force || needsEmbedding(unit, EMBEDDING_MODEL));
+      // The query finds units with no vector or an old model, but it does
+      // not compare a text hash. A unit whose text changed under an existing
+      // vector is caught here instead, and skipping it silently would leave
+      // a stale embedding serving current text.
+      //
+      // The vector itself is deliberately not selected — fetching 1024
+      // dimensions per row to ask whether it exists would dominate the
+      // query — so `has_embedding` stands in for it.
+      const stale = batch.filter(
+        (unit) =>
+          force ||
+          needsEmbedding(
+            {
+              text: unit.text,
+              ...(unit.has_embedding ? { embedding: PRESENT_VECTOR } : {}),
+              ...(unit.embedding_model ? { embeddingModel: unit.embedding_model } : {}),
+              ...(unit.text_hash ? { textHash: unit.text_hash } : {}),
+            },
+            EMBEDDING_MODEL,
+          ),
+      );
 
       if (stale.length === 0) {
         log(`  ${batch.length} unit(s) already current, nothing to do`);
@@ -783,42 +1077,21 @@ async function embedStage(
         const embedding = result.embeddings[i];
         // embedBatch already checks the count and dimensions, so a gap here
         // would be a logic error rather than a bad response. Skipping beats
-        // writing an empty vector the index would silently reject.
+        // writing an empty vector that could never match.
         if (!embedding) return [];
 
-        return [
-          {
-            updateOne: {
-              filter: { _id: unit._id },
-              update: {
-                $set: {
-                  // BSON has no float type, so an array of numbers is stored
-                  // as 1024 doubles — 14.2 KB per unit, measured. BinData
-                  // subtype 9 is 4 KB for the same vector, and Atlas indexes
-                  // both identically.
-                  embedding: Binary.fromFloat32Array(new Float32Array(embedding)),
-                  embeddingModel: EMBEDDING_MODEL,
-                  embeddedAt: new Date(),
-                },
-              },
-            },
-          },
-        ];
+        return [[unit.id, toVectorLiteral(embedding)] as const];
       });
 
-      // An unordered bulkWrite collects failures into its result instead of
-      // throwing, so the count must be checked. A full cluster rejects every
-      // write while the loop happily reports progress and exits zero — which
-      // is exactly what happened on the first full run.
-      const written = await units.bulkWrite(writes, { ordered: false });
-      const persisted = written.modifiedCount + written.upsertedCount;
+      const persisted = await writeVectors(pool, writes);
 
+      // A rejected write must stop the run rather than let the loop report
+      // progress and exit zero — which is exactly what a full Atlas cluster
+      // produced on the first full run, 24,576 units in.
       if (persisted < writes.length) {
-        const [first] = written.getWriteErrors();
         fail(
-          `Wrote ${persisted} of ${writes.length} vectors. MongoDB rejected the rest` +
-            (first ? `: ${first.errmsg}` : '.') +
-            '\nEmbedding stopped. Re-run once the cause is resolved; completed work is kept.',
+          `Wrote ${persisted} of ${writes.length} vectors; Postgres rejected the rest.\n` +
+            'Embedding stopped. Re-run once the cause is resolved; completed work is kept.',
         );
       }
 
@@ -833,12 +1106,57 @@ async function embedStage(
 
     log(`\nEmbedded ${embedded} unit(s), ${tokens.toLocaleString()} tokens.`);
 
-    const withVectors = await units.countDocuments({ embeddingModel: EMBEDDING_MODEL });
-    const total = await units.countDocuments();
-    log(`${withVectors} of ${total} units now carry a ${EMBEDDING_MODEL} vector.`);
+    const { rows: totals } = await pool.query<{ with_vectors: string; total: string }>(
+      `SELECT count(*) FILTER (WHERE embedding_model = $1) AS with_vectors,
+              count(*)                                    AS total
+         FROM ${RETRIEVAL_TABLE}`,
+      [EMBEDDING_MODEL],
+    );
+
+    log(
+      `${Number(totals[0]?.with_vectors ?? 0)} of ${Number(totals[0]?.total ?? 0)} ` +
+        `units now carry a ${EMBEDDING_MODEL} vector.`,
+    );
   } finally {
-    await client.close();
+    await pool.end();
   }
+}
+
+/**
+ * Stand-in for a vector that exists but was not fetched.
+ *
+ * `needsEmbedding` only checks whether a vector is present and non-empty, so
+ * a one-element array answers that question without transferring 1024
+ * dimensions per row. It is never written anywhere.
+ */
+const PRESENT_VECTOR: readonly number[] = [0];
+
+/**
+ * Write vectors, returning how many rows were updated.
+ *
+ * `UPDATE ... FROM (VALUES ...)` applies the whole batch in one statement.
+ * The cast to halfvec happens in SQL because the driver sends the literal as
+ * text, and an untyped parameter would be rejected against a halfvec column.
+ */
+async function writeVectors(
+  pool: Pool,
+  writes: readonly (readonly [string, string])[],
+): Promise<number> {
+  if (writes.length === 0) return 0;
+
+  const { placeholders, params } = valuesClause(writes.map(([id, vector]) => [id, vector]));
+
+  const { rowCount } = await pool.query(
+    `UPDATE ${RETRIEVAL_TABLE} AS u
+        SET embedding       = v.vector::halfvec,
+            embedding_model = $${params.length + 1},
+            embedded_at     = now()
+       FROM (VALUES ${placeholders}) AS v(id, vector)
+      WHERE u.id = v.id`,
+    [...params, EMBEDDING_MODEL],
+  );
+
+  return rowCount ?? 0;
 }
 
 /**
@@ -907,9 +1225,6 @@ async function searchStage(args: readonly string[]): Promise<void> {
     fail('Usage: search "your question" [--translation=BSB] [--type=passage] [--limit=5]');
   }
 
-  const uri = process.env.MONGODB_URI;
-  if (!uri) fail('Search needs MONGODB_URI in the environment.');
-
   const apiKey = process.env.VOYAGE_API_KEY;
   if (!apiKey) fail('Search needs VOYAGE_API_KEY to embed the question.');
 
@@ -918,21 +1233,20 @@ async function searchStage(args: readonly string[]): Promise<void> {
 
   const limitFlag = Number.parseInt(flag('limit') ?? '', 10);
 
-  const { MongoClient } = await import('mongodb');
-  const client = new MongoClient(uri);
+  const pool = openPool('Search', fail);
 
   try {
-    await client.connect();
-    const units = client
-      .db(process.env.MONGODB_DB ?? 'scrinode')
-      .collection<RetrievalUnit>(RETRIEVAL_COLLECTION);
+    const { rows } = await pool.query<{ count: string }>(
+      `SELECT count(*) AS count FROM ${RETRIEVAL_TABLE} WHERE embedding_model = $1`,
+      [EMBEDDING_MODEL],
+    );
+    const embedded = Number(rows[0]?.count ?? 0);
 
-    const embedded = await units.countDocuments({ embeddingModel: EMBEDDING_MODEL });
     if (embedded === 0) {
       fail('No units carry a vector yet. Run the embed stage first.');
     }
 
-    const hits = await searchUnits(units, question, {
+    const hits = await searchUnits(pool, question, {
       apiKey,
       ...(flag('translation') ? { translation: flag('translation') as string } : {}),
       ...(flag('type') ? { unitType: flag('type') as RetrievalUnit['unitType'] } : {}),
@@ -955,104 +1269,79 @@ async function searchStage(args: readonly string[]): Promise<void> {
       log('');
     }
   } finally {
-    await client.close();
+    await pool.end();
   }
 }
 
 /**
- * Show, or create, the Atlas Vector Search index.
+ * Report on the vector index.
  *
- * The driver can create vector indexes directly, so `--create` avoids
- * copying JSON into the Atlas UI and the transcription errors that invites.
- * Without it the definition is printed, which is still useful for review and
- * for anyone working through the UI.
- *
- * Either way the definition comes from the same constants the embedder uses,
- * so `numDimensions` cannot drift from the model.
+ * The index itself is created by migration 0002, not here: it is schema, and
+ * schema belongs in a migration that can be reviewed, ordered and rolled
+ * back. This command reports what exists so a slow search can be diagnosed
+ * without opening psql.
  */
-async function vectorIndexCommand(create: boolean): Promise<void> {
-  const definition = vectorIndexDefinition();
-
-  if (!create) {
-    printVectorIndex(definition);
-    return;
-  }
-
-  const uri = process.env.MONGODB_URI;
-  if (!uri) fail('Creating the index needs MONGODB_URI in the environment.');
-
-  const { MongoClient } = await import('mongodb');
-  const client = new MongoClient(uri);
+async function vectorIndexCommand(): Promise<void> {
+  const pool = openPool('Inspecting the index', fail);
 
   try {
-    await client.connect();
-    const collection = client
-      .db(process.env.MONGODB_DB ?? 'scrinode')
-      .collection(RETRIEVAL_COLLECTION);
+    log('Vector index');
+    log('');
+    log(`  table       ${RETRIEVAL_TABLE}`);
+    log(`  index       ${VECTOR_INDEX_NAME}`);
+    log(`  model       ${EMBEDDING_MODEL} (${EMBEDDING_DIMENSIONS} dimensions, fixed)`);
+    log('');
 
-    // The driver types this loosely; these are the fields Atlas returns and
-    // the only ones read here.
-    type SearchIndexInfo = { name: string; status?: string; queryable?: boolean };
+    const { rows: indexes } = await pool.query<{ indexdef: string }>(
+      `SELECT indexdef FROM pg_indexes
+        WHERE tablename = $1 AND indexname = $2`,
+      [RETRIEVAL_TABLE, VECTOR_INDEX_NAME],
+    );
 
-    const listIndexes = async (): Promise<SearchIndexInfo[]> =>
-      (await collection.listSearchIndexes().toArray()) as SearchIndexInfo[];
+    const definition = indexes[0]?.indexdef;
 
-    const existing = await listIndexes();
-    const already = existing.find((index) => index.name === VECTOR_INDEX_NAME);
-
-    if (already) {
-      log(`${VECTOR_INDEX_NAME} already exists (${already.status ?? 'unknown'}).`);
-      log('Atlas does not allow changing numDimensions in place. To change it,');
-      log('drop the index in the Atlas UI and re-run this command.');
-      return;
+    if (!definition) {
+      fail(
+        `${VECTOR_INDEX_NAME} does not exist.\n` +
+          'Run the migrations: pnpm --filter @scrinode/api migrate',
+      );
     }
 
-    await collection.createSearchIndex({
-      name: VECTOR_INDEX_NAME,
-      type: 'vectorSearch',
-      definition,
-    });
+    log(`  ${definition}`);
+    log('');
 
-    log(`Created ${VECTOR_INDEX_NAME} on ${RETRIEVAL_COLLECTION}.`);
+    // Index size is the number that decides whether it stays in RAM, which
+    // is the difference between a fast search and a disk-bound one.
+    const { rows: stats } = await pool.query<{
+      index_size: string;
+      table_size: string;
+      embedded: string;
+      total: string;
+    }>(
+      `SELECT pg_size_pretty(pg_relation_size($2))                    AS index_size,
+              pg_size_pretty(pg_total_relation_size($1))              AS table_size,
+              count(*) FILTER (WHERE embedding IS NOT NULL)::text     AS embedded,
+              count(*)::text                                          AS total
+         FROM ${RETRIEVAL_TABLE}`,
+      [RETRIEVAL_TABLE, VECTOR_INDEX_NAME],
+    );
 
-    // Atlas builds asynchronously; a PENDING index answers no queries, so
-    // waiting here means the next stage can rely on it.
-    for (let attempt = 0; attempt < 30; attempt += 1) {
-      const [index] = await listIndexes();
-      if (!index) break;
+    const row = stats[0];
 
-      if (index.status === 'READY') {
-        log(`Status READY, queryable.`);
-        return;
-      }
-
-      if (index.status === 'FAILED') {
-        fail(`Atlas reported the index build FAILED: ${JSON.stringify(index)}`);
-      }
-
-      await new Promise((resolve) => setTimeout(resolve, 5000));
+    if (row) {
+      log(`  index size  ${row.index_size}`);
+      log(`  table size  ${row.table_size}`);
+      log(`  embedded    ${Number(row.embedded).toLocaleString()} of ${Number(row.total).toLocaleString()}`);
     }
 
-    log('Still building. Check the Atlas UI; it will become queryable shortly.');
+    log('');
+    log(`  ef_search   ${HNSW_EF_SEARCH} (per query; raise for recall, lower for speed)`);
+    log('');
+    log('The column width is fixed at the model\'s dimensions. Changing the model');
+    log('means a migration altering the column and re-embedding every row.');
   } finally {
-    await client.close();
+    await pool.end();
   }
-}
-
-function printVectorIndex(definition: object): void {
-  log('Atlas Vector Search index');
-  log('');
-  log(`  database    ${process.env.MONGODB_DB ?? 'scrinode'}`);
-  log(`  collection  ${RETRIEVAL_COLLECTION}`);
-  log(`  index name  ${VECTOR_INDEX_NAME}`);
-  log(`  model       ${EMBEDDING_MODEL} (${EMBEDDING_DIMENSIONS} dimensions, fixed)`);
-  log('');
-  log('Atlas UI: Atlas Search -> Create Search Index -> Vector Search -> JSON Editor');
-  log('');
-  log(JSON.stringify(definition, null, 2));
-  log('');
-  log('numDimensions must match the model exactly. Changing it later requires');
-  log('dropping the index and re-embedding every document.');
 }
 
 function listStage(): void {
@@ -1092,7 +1381,7 @@ async function main(): Promise<void> {
     case 'status':
       return statusStage(sources());
     case 'vector-index':
-      return vectorIndexCommand(rest.includes('--create'));
+      return vectorIndexCommand();
     case 'search':
       return searchStage(rest);
     case 'units':
@@ -1152,7 +1441,7 @@ async function main(): Promise<void> {
           '  fetch [codes]        download publisher archives   (--force re-downloads)',
           '  parse [codes]        USFM to verse JSON + manifests',
           '  upload [codes]       staging tree to DigitalOcean Spaces  (--force re-uploads)',
-          '  load [codes]         verse documents into MongoDB  (--all, --force)',
+          '  load [codes]         verse rows into Postgres  (--all, --force)',
           '  all [codes]          fetch then parse',
           '',
           'With no codes, every source is processed.',
@@ -1164,8 +1453,8 @@ async function main(): Promise<void> {
           '  DO_SPACES_REGION     e.g. fra1 (default us-east-1)',
           '  DO_SPACES_KEY        access key',
           '  DO_SPACES_SECRET     secret key',
-          '  MONGODB_URI          connection string',
-          '  MONGODB_DB           database name (default scrinode)',
+          '  DATABASE_URL         postgres connection string',
+          '  DATABASE_SSL         true to require TLS (default false)',
           '  VOYAGE_API_KEY       embeddings key, for the embed stage',
         ].join('\n'),
       );
