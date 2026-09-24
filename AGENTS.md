@@ -681,9 +681,19 @@ Rules:
 - **`scrinode_english` strips diacritics before stemming.** Transliterated
   Greek and Hebrew reach the reader with accents nobody types; a search for
   "agape" must find "agápē".
-- **Proper names need phonetic matching, not only trigram.** Douay-Rheims
-  prints *Isaias* where other editions print *Isaiah*, and trigram cannot
-  bridge that. Use `dmetaphone`; rank with `levenshtein`.
+- **Proper names need phonetic matching, and phonetics alone is not enough.**
+  Douay-Rheims prints *Isaias* where other editions print *Isaiah*, and
+  trigram cannot bridge that. But `dmetaphone` equality fails in both
+  directions: *Isaiah* and *Isaias* are `AS` and `ASS`, so equality misses
+  them, while `was`, `is`, `as` and `Esau` are all `AS`, so equality matches
+  the commonest words in the text. Require both a close phonetic code and a
+  length-normalised spelling bound — see `infra/postgres/README.md` for the
+  measured form and its numbers.
+- **Name the schema of a text search dictionary.** `unaccent` is in `public`
+  and `english_stem` in `pg_catalog`; unqualified names resolve against a
+  `search_path` a migration does not control. Map `asciiword` as well as
+  `word`, or plain English goes unstemmed while accented words appear to
+  work.
 - **Scope keyword search to a translation.** Unscoped, a hit repeats once per
   translation loaded.
 

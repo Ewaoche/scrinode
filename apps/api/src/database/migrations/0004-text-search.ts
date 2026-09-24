@@ -39,10 +39,23 @@ export const migration0004: Migration = {
 
     // unaccent runs first and passes its output to english_stem. Order is
     // the whole point: stemming an accented word gives a different stem.
+    //
+    // Both dictionaries are schema-qualified, and they live in *different*
+    // schemas: `unaccent` is created by the extension in `public`, while
+    // `english_stem` is built in and lives in `pg_catalog`. Unqualified
+    // names resolve against search_path, which the migration does not
+    // control — and a wrong or missing qualification fails with "text search
+    // dictionary does not exist", which reads like the extension is absent.
+    //
+    // The token list covers the ASCII variants as well. Postgres classifies
+    // a purely ASCII word as `asciiword` and an accented one as `word`;
+    // mapping only the latter would leave ordinary English unstemmed while
+    // appearing to work on the accented cases the change was made for.
     await client.query(`
       ALTER TEXT SEARCH CONFIGURATION scrinode_english
-        ALTER MAPPING FOR hword, hword_part, word
-        WITH unaccent, english_stem
+        ALTER MAPPING FOR
+          word, asciiword, hword, hword_part, asciihword, hword_asciipart
+        WITH public.unaccent, pg_catalog.english_stem
     `);
 
     /**
@@ -139,6 +152,10 @@ export const migration0004: Migration = {
     // already gone, so this only guards a partially-applied state.
     await client.query('DROP FUNCTION IF EXISTS immutable_unaccent(text) CASCADE');
 
-    await client.query('DROP TEXT SEARCH CONFIGURATION IF EXISTS scrinode_english');
+    // CASCADE here too. The generated column's expression depends on this
+    // configuration, and while the column is dropped above, a rollback from
+    // a partially-applied state may still have it — without CASCADE the
+    // drop fails and the rollback cannot complete.
+    await client.query('DROP TEXT SEARCH CONFIGURATION IF EXISTS scrinode_english CASCADE');
   },
 };

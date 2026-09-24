@@ -138,19 +138,101 @@ describeWithDatabase('text search', () => {
     });
 
     it('matches a Douay-Rheims name a reader spells the Protestant way', async () => {
-      // The argument for fuzzystrmatch over trigram alone. Douay-Rheims
-      // prints Isaias where other editions print Isaiah, and Scrinode serves
-      // both (AGENTS.md §22.2).
+      // Douay-Rheims prints Isaias where other editions print Isaiah, and
+      // Scrinode serves both (AGENTS.md §22.2).
+      //
+      // Two things measured against a real database shaped this query, and
+      // neither was obvious from reading the documentation.
+      //
+      // 1. dmetaphone EQUALITY does not bridge this pair. Double Metaphone
+      //    encodes trailing consonants: Isaiah is 'AS', Isaias is 'ASS'.
+      //    An earlier version asserted equality, looked right, and failed.
+      //
+      // 2. Phonetic distance ALONE is far too loose. dmetaphone('was') is
+      //    also 'AS' — distance 0 from Isaiah. So are 'is', 'as', 'ease'
+      //    and 'Esau'. A phonetic-only rule matches the commonest words in
+      //    the text.
+      //
+      // So the rule needs both halves: the sound must be close, and the
+      // spelling must not be wildly different. The spelling bound is
+      // normalised by length, because a fixed edit distance is generous for
+      // a short word and harsh for Nebuchadnezzar.
       const { rows } = await pool.query<{ id: string }>(
         `SELECT id FROM translation_texts
           WHERE EXISTS (
             SELECT 1 FROM regexp_split_to_table(text, '\\s+') AS word
-             WHERE dmetaphone(word) = dmetaphone($1)
+             WHERE levenshtein(dmetaphone(word), dmetaphone($1)) <= 1
+               AND levenshtein(lower(word), lower($1))::numeric
+                     / greatest(length(word), length($1)) <= 0.5
           )`,
         ['Isaiah'],
       );
 
       expect(rows.map((r) => r.id)).toContain('DRA:ISA.1.1');
+    });
+
+    it('does not match common words that merely sound like a name', async () => {
+      // The failure mode the spelling bound exists to prevent. Without it,
+      // searching for Isaiah returns every verse containing "was".
+      const { rows } = await pool.query<{ id: string }>(
+        `SELECT id FROM translation_texts
+          WHERE EXISTS (
+            SELECT 1 FROM regexp_split_to_table(text, '\\s+') AS word
+             WHERE levenshtein(dmetaphone(word), dmetaphone($1)) <= 1
+               AND levenshtein(lower(word), lower($1))::numeric
+                     / greatest(length(word), length($1)) <= 0.5
+          )`,
+        ['Isaiah'],
+      );
+
+      // "a man named Zacchaeus was there" contains 'was', whose phonetic
+      // code is identical to Isaiah's.
+      expect(rows.map((r) => r.id)).not.toContain('BSB:LUK.19.2');
+    });
+
+    it('bridges the other Douay-Rheims name pairs too', async () => {
+      // One pair could be luck. These are the three §22.2 names, plus the
+      // Elijah/Elias pair the New Testament itself uses.
+      const pairs: readonly [string, string][] = [
+        ['Isaiah', 'Isaias'],
+        ['Hosea', 'Osee'],
+        ['Obadiah', 'Abdias'],
+        ['Elijah', 'Elias'],
+      ];
+
+      for (const [protestant, douay] of pairs) {
+        const { rows } = await pool.query<{ matches: boolean }>(
+          `SELECT levenshtein(dmetaphone($1), dmetaphone($2)) <= 1
+              AND levenshtein(lower($1), lower($2))::numeric
+                    / greatest(length($1), length($2)) <= 0.5 AS matches`,
+          [protestant, douay],
+        );
+
+        expect(rows[0]?.matches, `${protestant} should match ${douay}`).toBe(true);
+      }
+    });
+
+    it('records how far apart the Isaiah/Isaias codes actually are', async () => {
+      // Pins the measurement the rule above is built on. If a Postgres
+      // upgrade changes Double Metaphone, this fails and names the reason
+      // rather than leaving the search silently worse.
+      const { rows } = await pool.query<{
+        protestant: string;
+        douay: string;
+        distance: number;
+      }>(
+        `SELECT dmetaphone('Isaiah') AS protestant,
+                dmetaphone('Isaias') AS douay,
+                levenshtein(dmetaphone('Isaiah'), dmetaphone('Isaias')) AS distance`,
+      );
+
+      const row = rows[0]!;
+
+      // Not equal — the reason dmetaphone equality was the wrong test.
+      expect(row.protestant).not.toBe(row.douay);
+
+      // But close enough that a distance of 1 bridges them.
+      expect(row.distance).toBeLessThanOrEqual(1);
     });
 
     it('measures edit distance, for ranking near-misses', async () => {

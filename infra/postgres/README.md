@@ -34,6 +34,18 @@ entirely unless a text search configuration names it. Migration 0004 creates
 `immutable_unaccent` wrapper, because the stock function is `STABLE` and
 Postgres refuses a `STABLE` function in an index expression.
 
+Two details in that migration were wrong until they were run:
+
+- **The two dictionaries live in different schemas.** `unaccent` is created
+  by the extension in `public`; `english_stem` is built in and lives in
+  `pg_catalog`. Unqualified names resolve against `search_path`, which a
+  migration does not control, and the error — *text search dictionary does
+  not exist* — reads like a missing extension.
+- **ASCII tokens need mapping too.** Postgres classifies a plain English word
+  as `asciiword` and an accented one as `word`. Mapping only `word` leaves
+  ordinary English unstemmed while appearing to work on exactly the accented
+  cases the change was made for.
+
 An earlier version of this stack had the extension installed and unusable.
 Every structural check passed while accent-insensitive search silently did
 not exist, which is why `text-search.test.ts` asserts behaviour rather than
@@ -46,11 +58,48 @@ schema.
 |---|---|---|---|
 | Nebuchadnezer | Nebuchadnezzar | likely | yes |
 | Zaccheus | Zacchaeus | marginal | yes |
-| Isaiah | **Isaias** (Douay-Rheims) | no | yes |
+| Isaiah | **Isaias** (Douay-Rheims) | no | yes, with edit distance |
 
 The last row is the argument. Douay-Rheims prints *Isaias*, *Osee* and
 *Abdias* where other editions print *Isaiah*, *Hosea* and *Obadiah*, and
 Scrinode serves both (AGENTS.md §22.2).
+
+**Phonetic matching needs two conditions, not one.** Measured against a real
+database, both of these are true and neither is obvious:
+
+```text
+dmetaphone('Isaiah') = 'AS'      dmetaphone('Isaias') = 'ASS'   -> not equal
+dmetaphone('was')    = 'AS'      dmetaphone('Esau')   = 'AS'    -> equal to Isaiah
+```
+
+So equality both **misses** the variant spellings it was added for and
+**matches** the commonest words in the text. `is`, `as`, `was`, `has`, `ease`
+and `Esau` all share Isaiah's code. The working form requires the sound to be
+close *and* the spelling not to be wildly different:
+
+```sql
+levenshtein(dmetaphone(word), dmetaphone($1)) <= 1
+  AND levenshtein(lower(word), lower($1))::numeric
+        / greatest(length(word), length($1)) <= 0.5
+```
+
+The spelling bound is normalised by length: a fixed edit distance is generous
+for a three-letter word and harsh for *Nebuchadnezzar*. Measured on the pairs
+that matter, this admits all six genuine variants and rejects seven of nine
+noise words; the two that remain (*Isaac*, *house*) are real words a reader
+might plausibly be offered.
+
+| Reader types | Text has | Phonetic | Spelling ratio | Matched |
+|---|---|---|---|---|
+| Isaiah | Isaias | 1 | 0.17 | yes |
+| Hosea | Osee | 1 | 0.40 | yes |
+| Obadiah | Abdias | 1 | 0.43 | yes |
+| Elijah | Elias | 1 | 0.33 | yes |
+| Isaiah | **was** | 0 | 0.83 | no |
+| Isaiah | **Esau** | 0 | 0.67 | no |
+
+Every line of this was found by running SQL, not by reading documentation:
+the equality form was written first, looked obviously right, and failed.
 
 PostGIS carries no tables yet. It is installed because adding an extension to
 a live database later is a migration with superuser requirements, and the cost
@@ -104,6 +153,35 @@ docker compose up -d postgres      # first run builds the image
 docker compose logs -f postgres    # watch for "database system is ready"
 pnpm --filter @scrinode/api migrate
 ```
+
+### Without Docker
+
+The database integration suites skip unless `TEST_DATABASE_URL` is set, and
+they are the only thing that catches a migration that does not run. On a
+machine without Docker, WSL serves:
+
+```bash
+sudo apt-get install -y postgresql postgresql-contrib postgresql-16-pgvector
+sudo service postgresql start
+sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'scrinode_test'"
+sudo -u postgres createdb scrinode_test
+sudo -u postgres psql -d scrinode_test   -c 'CREATE EXTENSION vector'  -c 'CREATE EXTENSION pg_trgm'   -c 'CREATE EXTENSION fuzzystrmatch' -c 'CREATE EXTENSION unaccent'   -c 'CREATE EXTENSION btree_gin'
+```
+
+Windows reaches WSL on its interface address, not localhost, and
+`pg_hba.conf` must allow it:
+
+```bash
+echo 'host all all 172.16.0.0/12 md5' | sudo tee -a /etc/postgresql/16/main/pg_hba.conf
+sudo sed -i "s/^#listen_addresses.*/listen_addresses = '*'/" /etc/postgresql/16/main/postgresql.conf
+sudo service postgresql restart
+hostname -I | awk '{print $1}'      # the host for TEST_DATABASE_URL
+```
+
+**Ubuntu's `postgresql-16-pgvector` is 0.6.0, which has no `halfvec`.**
+Migration 0002 will fail against it. That is enough to exercise migrations
+0001, 0003 and 0004; for the vector schema, use Docker or build pgvector
+0.7+ from source.
 
 The init SQL runs **only when the data directory is empty**. After changing
 it, recreate the volume:

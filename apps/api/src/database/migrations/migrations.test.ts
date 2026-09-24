@@ -51,6 +51,17 @@ describeWithDatabase('schema migrations', () => {
     for (const { tablename } of rows) {
       await pool.query(`DROP TABLE IF EXISTS "${tablename}" CASCADE`);
     }
+
+    // Migration 0004 creates objects that are not tables, so dropping tables
+    // alone left them behind and the next apply() failed on a duplicate
+    // name. Recreating the schema outright is the honest reset: it cannot
+    // miss an object type a future migration introduces.
+    const schema = (
+      await pool.query<{ current_schema: string }>('SELECT current_schema()')
+    ).rows[0]!.current_schema;
+
+    await pool.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+    await pool.query(`CREATE SCHEMA ${schema}`);
   });
 
   const apply = () => new MigrationRunner(pool, MIGRATIONS).up();
