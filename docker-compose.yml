@@ -1,0 +1,62 @@
+# Scrinode local infrastructure.
+#
+# Mirrors the DigitalOcean droplet: one Postgres holding relational data,
+# vectors (pgvector) and, later, geospatial data (PostGIS). Atlas is gone, and
+# with it the separate vector service — AGENTS.md §7.
+#
+# The droplet runs this same image. Keeping local and production on one image
+# means an extension that is missing in production is missing locally too,
+# rather than being discovered after deploy.
+
+services:
+  postgres:
+    # pgvector's image tracks the Postgres version in its tag. PostGIS is
+    # layered on top by our own Dockerfile: no published image carries both,
+    # and installing an extension at runtime would not survive a container
+    # rebuild.
+    build:
+      context: ./infra/postgres
+      args:
+        PG_MAJOR: '17'
+    image: scrinode/postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-scrinode}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-scrinode_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-scrinode_dev}
+      # Scripture text is compared case- and accent-sensitively; the default
+      # collation must not change between environments or index ordering
+      # silently differs.
+      POSTGRES_INITDB_ARGS: '--encoding=UTF8 --locale=C'
+    ports:
+      # Bound to localhost only. On the droplet this port is never published;
+      # the app containers reach Postgres over the compose network.
+      - '127.0.0.1:${POSTGRES_PORT:-5432}:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Runs once, only when the data directory is empty. Extensions must
+      # exist before any migration references their types.
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # `pg_isready` alone returns true while the server is still replaying
+      # WAL and refusing connections. An actual query is the honest check.
+      test: ['CMD-SHELL', 'psql -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}" -c "SELECT 1" || exit 1']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    shm_size: 256mb
+    command:
+      - postgres
+      # HNSW index builds are memory-hungry and fall back to a far slower
+      # path when they cannot fit. See infra/postgres/README.md for how these
+      # are sized against droplet RAM.
+      - -c
+      - maintenance_work_mem=512MB
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - max_parallel_maintenance_workers=2
+
+volumes:
+  postgres_data:
