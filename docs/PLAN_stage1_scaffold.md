@@ -14,6 +14,12 @@
 
 Turborepo workspace · three apps building and testing · shared packages · Auth.js wiring · theming · Redux Toolkit + RTK Query · MongoDB data layer · migration runner · test infrastructure · lint and boundary rules.
 
+> **Superseded in part (2026-09-24).** The data layer moved from MongoDB Atlas
+> to self-hosted PostgreSQL with pgvector; Atlas Vector Search billing was not
+> affordable at the corpus size Scrinode needs. The §2.1 reasoning against
+> Prisma still holds and now applies to ORMs generally — see AGENTS.md §24 and
+> `infra/postgres/README.md`. Everything else in this document stands.
+
 ### Explicitly out of scope
 
 No designed UI. Screens exist only as the minimum needed to prove wiring works — an unstyled page that renders, a login form that authenticates, a themed toggle that flips. **The Bible reader, Verse Inspector, backoffice screens and all visual design come later.**

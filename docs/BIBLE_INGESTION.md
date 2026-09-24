@@ -1,9 +1,9 @@
 # Bible Ingestion
 
-**Status:** Implemented. 34 translations staged and parsed; load proven against a real MongoDB. Upload and production load await credentials.
+**Status:** Implemented. 34 translations staged and parsed. Migrated from MongoDB Atlas to PostgreSQL + pgvector (2026-09-24); the load and embed stages need re-running against Postgres. Upload awaits credentials.
 **Author:** Claude (Opus 5)
 **Date:** 2026-09-20
-**Implements:** AGENTS.md §21 (Source Provenance), §22.1 (Translation Licensing), §24 (MongoDB Rules)
+**Implements:** AGENTS.md §21 (Source Provenance), §22.1 (Translation Licensing), §24 (Database Rules)
 **Code:** `packages/ingest`
 **See also:** `docs/TRANSLATION_LICENSING.md` for which texts may be served
 
@@ -15,7 +15,7 @@ A four-stage pipeline that turns publisher archives into verse documents:
 
 ```text
 fetch  →  parse  →  upload  →  load
-        USFM zip    verse JSON   DO Spaces   MongoDB
+        USFM zip    verse JSON   DO Spaces   Postgres
 ```
 
 Run so far: **34 public-domain English translations, 2,040 books, 36,709
@@ -27,7 +27,7 @@ The stages are separate because they fail and cost differently. Downloading
 deterministic; uploading costs bandwidth; loading writes to a production
 database. Re-running `parse` after a parser fix must not re-download
 everything, and `load` must be provable against local JSON before it touches
-MongoDB.
+the database.
 
 ---
 
@@ -40,7 +40,7 @@ node packages/ingest/dist/cli.js list           # every source, and its status
 node packages/ingest/dist/cli.js fetch          # download archives  (~73MB)
 node packages/ingest/dist/cli.js parse          # USFM → verse JSON  (~650MB)
 node packages/ingest/dist/cli.js upload         # → DigitalOcean Spaces
-node packages/ingest/dist/cli.js load           # → MongoDB
+node packages/ingest/dist/cli.js load           # → Postgres
 ```
 
 Any stage accepts translation codes to limit it: `... parse BSB KJV`.
@@ -61,7 +61,7 @@ time and skip work that is already current.
 
 ```powershell
 .\scripts\Push-BibleSources.ps1      # fetch, parse, upload to Spaces
-.\scripts\Push-BibleToMongo.ps1      # load verse documents into MongoDB
+.\scripts\Push-BibleToPostgres.ps1   # load verse rows into Postgres
 ```
 
 | Switch | Effect |
@@ -70,11 +70,11 @@ time and skip work that is already current.
 | `-WhatIf` | report state and stop |
 | `-Force` | redo work the ledger says is current |
 | `-SkipFetch` / `-SkipParse` | upload script only |
-| `-RegisteredOnly` | Mongo script; load only servable translations |
+| `-RegisteredOnly` | Postgres script; load only servable translations |
 
 Both read `.env` at the repository root, rebuild the CLI when its source is
 newer than its output, print state before and after, and fail before doing
-any work when a setting is missing. Neither prints a secret: the Mongo script
+any work when a setting is missing. Neither prints a secret: the Postgres script
 reports the cluster host and database, never the connection string.
 
 The scripts orchestrate; the CLI owns hashing, the ledger and every write, so
@@ -89,7 +89,7 @@ Two independent mechanisms, which is why an interrupted run is safe.
 halfway is repaired by re-running, never duplicated. Verified: a forced
 reload of 62,188 verses left the count unchanged.
 
-**The run ledger.** `ingest_runs` in MongoDB records the SHA256 of the
+**The run ledger.** The `ingest_runs` table records the SHA256 of the
 publisher archive each stage processed. Parsing is deterministic, so an
 unchanged hash means unchanged output and the stage is skipped.
 
@@ -152,14 +152,14 @@ proves the bytes are the ones whose licence was verified.
 
 ---
 
-## 5. MongoDB shape
+## 5. Database shape
 
 **Verse documents**, one per translation per verse. This follows from
 decisions already made elsewhere rather than from storage preference:
 
 - `CanonicalVerseId` is already the database identity (§10)
 - cross-references target verses, not chapters
-- Atlas Vector Search needs verse-level chunks for Zedek's retrieval (§20)
+- retrieval needs verse-level chunks for Zedek (§20)
 - the Verse Inspector operates on a single verse
 
 ```ts
@@ -311,7 +311,7 @@ across the same 1,189 chapters.
 
 ## 10. What is loaded versus what is stored
 
-**Staging and MongoDB are not the same set.** All 34 texts are downloaded and
+**Staging and the database are not the same set.** All 34 texts are downloaded and
 archived so the corpus is complete and re-import never depends on a publisher
 staying online. Only the 10 registered in
 `packages/scripture/src/translations.ts` are servable.
@@ -366,40 +366,64 @@ grounding on a 0.62 match.
 
 ---
 
-## 12. Storage — deferred decision
+## 12. Storage — resolved by the move to Postgres
 
-A vector is 4.74 KB as BinData float32, measured. BSB's 41,829 units project
-to **225 MB**, and all 34 translations to **5.5 GB**.
+This section previously recorded a deferred decision: a BinData float32
+vector measured 4.74 KB, BSB's 41,829 units projected to **225 MB**, and all
+34 translations to **5.5 GB** — against an Atlas M0 cluster capped at 512 MB.
+A single full embedding run filled it. The options were an M10 upgrade at
+roughly $57/month, dropping verse-level units, or `int8` quantization.
 
-The current Atlas cluster is M0, capped at 512 MB. A full BSB embedding run
-fills it. Three ways forward, none yet chosen:
+**The move to self-hosted Postgres removes the constraint that forced the
+choice.** Storage is droplet disk, and 5.5 GB is unremarkable there.
 
-| Option | BSB size | Trade |
+What replaced it is a different decision, already made: vectors are stored as
+`halfvec(1024)` — 16-bit floats — rather than full `vector`.
+
+| | float32 (`vector`) | float16 (`halfvec`) |
 |---|---|---|
-| Upgrade to M10 | 225 MB of 10 GB | ~$57/month |
-| Passages + chapters only | ~58 MB | no verse-level vectors |
-| `int8` quantization | ~56 MB | some recall loss |
+| Per unit | 4 KB | 2 KB |
+| BSB (41,829 units) | ~172 MB | ~86 MB |
+| All 34 translations | ~5.5 GB | ~2.7 GB |
+| pgvector index ceiling | 2,000 dims | 4,000 dims |
 
-Dropping verse-level units is less costly than it sounds: the Verse Inspector
-looks a verse up by reference from the `verses` collection, which is not a
-vector search. Verse units matter for retrieval only when a question targets
-one specific verse whose wording is not distinctive enough to surface its
-passage.
+At 1024 dimensions the recall difference is negligible — comparable to the
+scalar quantization Atlas was already applying — while the HNSW index halves.
+That matters because the index should stay resident in droplet RAM, and it is
+RAM rather than disk that now sets the practical limit.
+
+**What is still worth knowing.** Dropping verse-level units remains the
+cheapest lever if memory ever becomes tight, and it costs less than it
+sounds: the Verse Inspector looks a verse up by reference from
+`translation_texts`, which is not a vector search. Verse units matter for
+retrieval only when a question targets one specific verse whose wording is
+not distinctive enough to surface its passage.
+
+**Sizing the droplet.** `maintenance_work_mem` decides whether an HNSW build
+takes minutes or hours; the full corpus wants roughly 1 GB for it, which a
+2 GB droplet cannot give alongside everything else. Either build indexes
+before loading the full corpus, or size at 4 GB. See
+`infra/postgres/README.md`.
 
 ---
 
 ## 13. Open items
 
-1. **Upload has not been run against real Spaces.** It needs credentials. The
-   load stage has been exercised end to end against an in-memory MongoDB —
-   62,188 verses, ledger tracking, idempotent re-runs, stale cleanup — but
-   not yet against the production cluster.
-2. **Ordinal for deuterocanonical books** places them after Revelation
+1. **Upload has not been run against real Spaces.** It needs credentials.
+2. **The load and embed stages need re-running against Postgres.** Both were
+   exercised end to end against MongoDB — 62,188 verses loaded, 5,609 units
+   embedded, ledger tracking, idempotent re-runs, stale cleanup — but that
+   proof does not carry over to the rewritten SQL path. The parsed staging
+   tree is unchanged and needs no re-fetch.
+3. **The 5,609 vectors embedded on Atlas do not transfer.** They were paid
+   for per token. Export them before the cluster is decommissioned, or budget
+   for re-embedding.
+4. **Ordinal for deuterocanonical books** places them after Revelation
    (order 67–86). That keeps sorting stable but is not how Catholic or
    Orthodox editions print them. Worth revisiting when the reader gains a
    canon-aware table of contents.
-3. **Strong's numbers are parsed but not stored.** `extractStrongs` works and
-   the BSB carries lemma data on most words; wiring it into a lexeme
-   collection belongs with the original-language layer.
-4. **`latest.json` is written by `upload` but nothing reads it yet.** It
+5. **Strong's numbers are parsed but not stored.** `extractStrongs` works and
+   the BSB carries lemma data on most words; wiring it into a lexemes table
+   belongs with the original-language layer.
+6. **`latest.json` is written by `upload` but nothing reads it yet.** It
    exists so the API can resolve "current text" without knowing dates.

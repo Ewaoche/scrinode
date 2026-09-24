@@ -334,8 +334,9 @@ Default stack:
 ```text
 Frontend       Next.js + React + TypeScript
 Backend        NestJS + TypeScript
-Database       MongoDB Atlas
-Vector Search  MongoDB Atlas Vector Search
+Database       PostgreSQL (self-hosted, DigitalOcean Droplet)
+Vector Search  pgvector (same database)
+Geospatial     PostGIS (installed, unused until Phase 2)
 Auth           Auth.js / NextAuth
 State          Redux Toolkit + RTK Query
 Styles         Tailwind CSS
@@ -425,7 +426,7 @@ Enforced by ESLint. A violating import fails `pnpm verify` and fails CI.
 @scrinode/backoffice  ✗ @scrinode/web, @scrinode/scripture
 @scrinode/api         ✗ frontend apps and their components
 @scrinode/types       ✗ every runtime dependency
-apps/api domain code  ✗ the mongodb driver — use a repository
+apps/api domain code  ✗ the pg driver — use a repository
 everywhere but ai/    ✗ vendor AI SDKs — use AIProvider
 everywhere            ✗ relative imports across packages
 ```
@@ -982,6 +983,8 @@ records the pipeline and what the archives actually contained.
   put in the text stay in the text.
 - Staging is not permission. Texts may be archived without being registered;
   `isAvailable()` still decides what may be served.
+- The ingestion CLI writes to the same database the API reads, through the
+  same schema, created by the API's migrations. Run them before loading.
 
 ---
 
@@ -1010,11 +1013,15 @@ Do not invent denominational consensus.
 
 ---
 
-# 24. MongoDB Rules
+# 24. Database Rules
 
-Prefer multiple collections over giant nested documents.
+PostgreSQL, accessed through the `pg` driver. No ORM: retrieval depends on
+pgvector operators and index settings (`<=>`, `hnsw.ef_search`) that ORMs
+either cannot express or express badly, and §19 makes that path load-bearing.
 
-Conceptual collections:
+Prefer many narrow tables over wide rows carrying nested JSON.
+
+Conceptual tables:
 
 ```text
 verses
@@ -1027,7 +1034,8 @@ morphology
 themes
 entities
 sources
-research_chunks
+retrieval_units
+ingest_runs
 
 users
 notes
@@ -1042,11 +1050,24 @@ notification_events
 
 Avoid:
 
-- Entire Bible in one document.
-- Entire conversation in one ever-growing document.
-- Entire workspace in one unbounded nested structure.
+- `jsonb` where a column or a table would do. It defeats constraints, typing
+  and the planner, and becomes a schema nobody can see.
+- An unbounded array column. A conversation's messages are rows.
+- Denormalising before a measured need.
 
-Use denormalization intentionally.
+Rules:
+
+- **`snake_case` everywhere.** Postgres folds unquoted identifiers to lower
+  case; a quoted `"camelCase"` column must then be quoted in every query, and
+  the first one forgotten is a runtime error. The only exceptions are the four
+  tables Auth.js owns, whose column names its own SQL dictates (§27.1).
+- **Constraints belong in the database.** A `CHECK` that rejects a testament
+  outside `OT`/`NT` holds against every writer, including a migration and a
+  psql session. Application validation does not.
+- **Parameterise every value.** Repositories build SQL with `$1`, `$2`; a
+  concatenated value is an injection hole no upstream validation closes (§33).
+- **Every schema change is a migration**, ordered and reversible. Migrations
+  run in a transaction, so a failure leaves nothing behind.
 
 ---
 
@@ -1268,22 +1289,30 @@ Do not force heavy batch work into interactive HTTP requests.
 ## MVP
 
 ```text
-Next.js  → Vercel
-NestJS   → Vercel
-MongoDB  → Atlas
-Email    → Resend
-SMS      → Termii
+Next.js    → Vercel
+NestJS     → Vercel
+PostgreSQL → DigitalOcean Droplet, containerised
+Email      → Resend
+SMS        → Termii
 ```
+
+The database is self-hosted rather than managed. Managed vector search was
+metered per storage tier and the corpus outgrew its free tier before it was
+fully loaded; on a droplet, storage is disk. See `docs/BIBLE_INGESTION.md` §12
+for the measured numbers.
+
+Self-hosting means backups, upgrades and monitoring are ours. That work is
+real and must not be deferred indefinitely — see `infra/postgres/README.md`.
 
 ## Scale Path
 
 If needed:
 
 ```text
-Next.js → Vercel
-NestJS  → Cloud Run / ECS / Railway / Fly.io / Render
-Workers → dedicated worker runtime
-MongoDB → Atlas
+Next.js    → Vercel
+NestJS     → Cloud Run / ECS / Railway / Fly.io / Render
+Workers    → dedicated worker runtime
+PostgreSQL → larger droplet, then a managed Postgres offering pgvector
 ```
 
 Keep NestJS cloud-portable.
@@ -1633,7 +1662,7 @@ Never let imported data bypass validation.
 
 Do not require a graph database in MVP.
 
-Represent relations in MongoDB first.
+Represent relations as rows first.
 
 Examples:
 
@@ -1711,7 +1740,7 @@ Minimum layers:
 
 ## Integration
 
-- MongoDB repositories.
+- PostgreSQL repositories.
 - Vector search.
 - Auth.
 - Zedek orchestration.

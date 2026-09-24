@@ -88,8 +88,9 @@ Zedek is orchestrated (intent routing, structured retrieval, tools, context asse
 Frontend       Next.js · React · TypeScript · Tailwind CSS · Radix UI · next-themes
 State          Redux Toolkit + RTK Query
 Backend        NestJS · TypeScript
-Database       MongoDB Atlas
-Vector search  MongoDB Atlas Vector Search
+Database       PostgreSQL 17 — containerised on a DigitalOcean Droplet
+Vector search  pgvector, in the same database
+Geospatial     PostGIS — installed, unused until Phase 2
 Auth           Auth.js / NextAuth
 AI             Provider abstraction layer (capability roles, not vendor names)
 Streaming      Server-Sent Events
@@ -123,7 +124,7 @@ scrinode/
 
 All workspace packages are scoped `@scrinode/*` — `@scrinode/web`, `@scrinode/types`, `@scrinode/scripture` and so on. Internal dependencies use `workspace:*`, and imports always use the package name rather than a relative path across boundaries.
 
-Package boundaries are enforced by ESLint rather than convention: the public reader cannot import admin code, `@scrinode/types` cannot take a runtime dependency, domain services cannot import the MongoDB driver, and vendor AI SDKs are confined to `@scrinode/ai`. A violating import fails the build.
+Package boundaries are enforced by ESLint rather than convention: the public reader cannot import admin code, `@scrinode/types` cannot take a runtime dependency, domain services cannot import the `pg` driver, and vendor AI SDKs are confined to `@scrinode/ai`. A violating import fails the build.
 
 ---
 
