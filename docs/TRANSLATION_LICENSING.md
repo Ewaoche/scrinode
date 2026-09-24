@@ -430,7 +430,7 @@ Verified 20 September 2026 by fetching each source.
 
 Tier 1 texts are distributed as **bulk downloads**, not metered APIs. There is
 no key, no rate limit, no per-request call and no quota to design around. The
-text is ingested once into MongoDB and served from there, which is what
+text is ingested once into the database and served from there, which is what
 AGENTS.md §24 already assumes.
 
 ### Primary sources

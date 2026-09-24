@@ -98,7 +98,8 @@ describe('HealthController', () => {
     it('still reports liveness ok when the database is down', async () => {
       const controller = await buildController(false);
 
-      // Restarting a healthy process because Atlas is slow makes outages worse.
+      // Restarting a healthy process because the database is slow makes
+      // outages worse.
       expect(controller.live().status).toBe('ok');
     });
   });

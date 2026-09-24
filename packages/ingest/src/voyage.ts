@@ -148,7 +148,7 @@ export async function embedBatch(
         if (embedding.length !== EMBEDDING_DIMENSIONS) {
           throw new VoyageError(
             `Expected ${EMBEDDING_DIMENSIONS} dimensions from ${model}, received ${embedding.length}. ` +
-              'The Atlas index declares the expected number and will reject these.',
+              'The halfvec column declares the expected width and will reject these.',
           );
         }
       }

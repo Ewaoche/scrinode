@@ -97,8 +97,9 @@ describe('embedBatch', () => {
 
 describe('dimension validation', () => {
   it('rejects a response whose dimensions would break the index', async () => {
-    // The Atlas index declares numDimensions. A mismatch is silently
-    // rejected at insert time, so catching it here names the real cause.
+    // The halfvec column declares its width. A mismatch is rejected at
+    // insert time with an error naming the column rather than the model, so
+    // catching it here names the real cause.
     const wrong = new Response(
       JSON.stringify({
         data: [{ embedding: [0.1, 0.2, 0.3], index: 0 }],

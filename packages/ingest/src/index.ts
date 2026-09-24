@@ -2,7 +2,7 @@
  * @scrinode/ingest — Bible source acquisition and loading.
  *
  * Downloads publisher archives, parses USFM, stages to object storage and
- * loads verse documents into MongoDB. Kept out of apps/api so the API
+ * loads verse rows into Postgres. Kept out of apps/api so the API
  * runtime never carries USFM parsing or an S3 client.
  */
 

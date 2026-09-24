@@ -118,7 +118,7 @@ export function processArchive(entries: readonly ArchiveEntry[]): ProcessResult 
   return { books, skipped };
 }
 
-/** Turn parsed books into verse documents ready for MongoDB. */
+/** Turn parsed books into verse rows ready for the database. */
 export function toVerseDocuments(
   translation: string,
   release: string,
@@ -197,7 +197,7 @@ export function buildManifest(input: ManifestInput, result: ProcessResult): Mani
 /**
  * Checks a release must pass before it may be loaded.
  *
- * Production-first (AGENTS.md): a malformed import that reaches MongoDB is
+ * Production-first (AGENTS.md): a malformed import that reaches the database is
  * far more expensive to undo than one refused here. Every failure names the
  * translation and what was wrong, because these run over 34 texts at once.
  */

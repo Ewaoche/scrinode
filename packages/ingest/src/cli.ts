@@ -61,7 +61,8 @@ import {
  * Downloading 34 archives is slow and network-bound; parsing is fast and
  * deterministic; uploading costs bandwidth; loading writes to a production
  * database. Re-running `parse` after a parser fix must not re-download 73MB,
- * and `load` must be provable against local JSON before it touches Mongo.
+ * and `load` must be provable against local JSON before it touches the
+ * database.
  *
  * Credentials come from the environment and are never written to the staging
  * tree, logged, or committed.
@@ -135,7 +136,7 @@ async function write(path: string, data: string | Buffer): Promise<void> {
 /**
  * Open a ledger connection.
  *
- * The ledger lives in MongoDB even for the upload stage, so both scripts
+ * The ledger lives in Postgres even for the upload stage, so both scripts
  * answer "what changed?" from one place that survives a rebuilt machine and
  * is visible to every operator.
  */
@@ -399,7 +400,7 @@ async function uploadStage(sources: readonly BibleSource[], force: boolean): Pro
         Key: objectKey,
         Body: body,
         ContentType: contentType,
-        // Source data is not public; the API serves text from MongoDB.
+        // Source data is not public; the API serves text from the database.
         ACL: 'private',
       }),
     );
@@ -740,7 +741,7 @@ async function upsertTranslation(
 /**
  * Build retrieval units from loaded verses.
  *
- * Reads from MongoDB rather than the staging tree: units are derived from
+ * Reads from the database rather than the staging tree: units are derived from
  * what is actually being served, so a unit can never describe text the
  * reader does not have.
  *

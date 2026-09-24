@@ -95,7 +95,7 @@ export function releasePaths(translation: string, release: string): ReleasePaths
 }
 
 /**
- * Pointer to the release currently loaded into MongoDB.
+ * Pointer to the release currently loaded into the database.
  *
  * Kept outside the release directory so it can be updated atomically without
  * touching immutable data, and read by anything that needs "the current text"
