@@ -47,7 +47,23 @@ async function bootstrap(): Promise<void> {
   // Never advertise the framework to an attacker fingerprinting the stack.
   app.getHttpAdapter().getInstance().disable('x-powered-by');
 
-  await app.listen(env.API_PORT);
+  // Close in-flight requests and release the connection pool on SIGTERM.
+  //
+  // Nest does not listen for termination signals unless this is called, so
+  // without it a redeploy kills the process mid-request and leaves Postgres
+  // holding connections until they time out — which a rolling restart can
+  // turn into exhausted max_connections (DatabaseModule.onApplicationShutdown
+  // is what actually closes the pool).
+  app.enableShutdownHooks();
+
+  // Bind to every interface, not just loopback.
+  //
+  // Without an explicit host, Node may bind to localhost only, and inside a
+  // container that means nothing outside it can connect — including Docker's
+  // own healthcheck and the reverse proxy. The container boundary is the
+  // isolation here: the droplet's firewall and compose network decide what
+  // can reach this port, not the bind address.
+  await app.listen(env.API_PORT, '0.0.0.0');
 
   Logger.log(`API listening on port ${env.API_PORT}`, 'Bootstrap');
 }

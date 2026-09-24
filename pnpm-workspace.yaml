@@ -6,12 +6,6 @@ packages:
 allowBuilds:
   # Compiler used by the NestJS CLI to build @scrinode/api.
   '@swc/core': true
-  cpu-features: set this to true or false
-  # Downloads a MongoDB binary so tests run against a real server without
-  # touching Atlas. Test-only; never a runtime dependency.
-  mongodb-memory-server: true
-  protobufjs: set this to true or false
-  ssh2: set this to true or false
 # Peer ranges we have deliberately overruled. Each must be justified, so a
 # genuine incompatibility is never lost among accepted warnings.
 peerDependencyRules:

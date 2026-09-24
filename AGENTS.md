@@ -1317,20 +1317,41 @@ Do not force heavy batch work into interactive HTTP requests.
 ## MVP
 
 ```text
-Next.js    → Vercel
-NestJS     → Vercel
-PostgreSQL → DigitalOcean Droplet, containerised
+Next.js    → Vercel          (reader and backoffice)
+NestJS     → DigitalOcean Droplet, containerised
+PostgreSQL → the same droplet, containerised
 Email      → Resend
 SMS        → Termii
 ```
+
+**The API runs beside the database, not on Vercel.** Postgres then publishes
+no port at all: the two reach each other over a private compose network, so
+there is no public database surface to firewall and no credential crossing
+the internet. Only the API is exposed, behind TLS.
+
+The frontends stay on Vercel. They hold no database credentials and benefit
+from its edge network.
 
 The database is self-hosted rather than managed. Managed vector search was
 metered per storage tier and the corpus outgrew its free tier before it was
 fully loaded; on a droplet, storage is disk. See `docs/BIBLE_INGESTION.md` §12
 for the measured numbers.
 
-Self-hosting means backups, upgrades and monitoring are ours. That work is
-real and must not be deferred indefinitely — see `infra/postgres/README.md`.
+Self-hosting means backups, upgrades and monitoring are ours. Backups and
+deployment are implemented (`infra/README.md`); **monitoring is not**, and
+§34 requires it.
+
+Rules:
+
+- **Never publish the database port in production.** `docker-compose.prod.yml`
+  uses `expose`, not `ports`, and a test asserts it. `DATABASE_SSL=false` is
+  correct only because the connection never leaves the compose network.
+- **Migrations run as a deploy step, never on boot.** Between the migration
+  and the restart the old code serves traffic against the new schema, which
+  is why §24 requires expand → migrate → contract.
+- **Keep NestJS cloud-portable.** Containerising it serves this rather than
+  working against it: the image runs anywhere, and nothing in domain code
+  knows it is on a droplet.
 
 ## Scale Path
 

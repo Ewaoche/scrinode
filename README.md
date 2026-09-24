@@ -96,7 +96,7 @@ AI             Provider abstraction layer (capability roles, not vendor names)
 Streaming      Server-Sent Events
 Email / SMS    Resend · Termii
 Cron           Vercel Cron
-Deployment     Vercel — separate projects for web and backoffice
+Deployment     Frontends on Vercel; API and database on a DigitalOcean Droplet
 ```
 
 ### Three applications
