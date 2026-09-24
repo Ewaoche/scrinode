@@ -6,8 +6,8 @@ import { defineConfig, devices } from '@playwright/test';
  * These are smoke tests proving each app boots, serves, and holds its
  * boundaries. Feature flows arrive with the features.
  *
- * Every app runs against the in-memory MongoDB started by run.mjs, so the
- * suite never reaches Atlas.
+ * Every app runs against the disposable database prepared by run.mjs, so
+ * the suite never reaches a real deployment.
  */
 const API_PORT = 4100;
 const WEB_PORT = 3100;
@@ -19,14 +19,15 @@ export const PORTS = { api: API_PORT, web: WEB_PORT, backoffice: BACKOFFICE_PORT
 const E2E_SECRET = 'e2e-test-secret-not-for-real-use-0000';
 
 /**
- * Set by run.mjs, which starts an in-memory MongoDB before invoking
- * Playwright. Running `playwright test` directly will fail to connect, which
- * is deliberate: the suite must never fall back to a real cluster.
+ * Set by run.mjs, which creates a disposable database before invoking
+ * Playwright. Running `playwright test` directly leaves this empty and the
+ * apps fail to connect, which is deliberate: the suite must never fall back
+ * to a database someone is using.
  */
 const sharedEnv = {
   NODE_ENV: 'production',
-  MONGODB_URI: process.env.MONGODB_URI ?? '',
-  MONGODB_DB: process.env.MONGODB_DB ?? 'scrinode_e2e',
+  DATABASE_URL: process.env.DATABASE_URL ?? '',
+  DATABASE_SSL: 'false',
 };
 
 export default defineConfig({

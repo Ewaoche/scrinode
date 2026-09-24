@@ -3,7 +3,7 @@
     Shared helpers for the Scrinode ingestion scripts.
 
 .DESCRIPTION
-    Dot-sourced by Push-BibleSources.ps1 and Push-BibleToMongo.ps1. Holds the
+    Dot-sourced by Push-BibleSources.ps1 and Push-BibleToPostgres.ps1. Holds the
     parts both need: locating the repository, loading a .env file, checking
     required settings, and reporting.
 

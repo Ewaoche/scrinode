@@ -22,6 +22,25 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
+    # Integration tests need a real PostgreSQL with pgvector: there is no
+    # in-process substitute that carries the extension, and a test passing
+    # against a fake engine would be worse than no test. Without this the
+    # database suites skip, which CI must never do silently.
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: scrinode
+          POSTGRES_PASSWORD: scrinode_ci
+          POSTGRES_DB: scrinode_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U scrinode"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - uses: actions/checkout@v4
 
@@ -39,11 +58,37 @@ jobs:
         # package.json, so a dependency change cannot land unrecorded.
         run: pnpm install --frozen-lockfile
 
+      - name: Enable pgvector
+        # CREATE EXTENSION needs privileges the application role lacks, so it
+        # happens here rather than in a migration — the same division as the
+        # container's init SQL locally.
+        run: |
+          PGPASSWORD=scrinode_ci psql -h localhost -U scrinode -d scrinode_ci \
+            -c 'CREATE EXTENSION IF NOT EXISTS vector' \
+            -c 'CREATE EXTENSION IF NOT EXISTS pg_trgm' \
+            -c 'CREATE EXTENSION IF NOT EXISTS unaccent'
+
       - name: Verify
         # Boundary violations, type errors and failing tests all fail here.
         # Concurrency is capped in the verify script itself so local runs and
         # CI behave alike; see the comment there.
+        env:
+          TEST_DATABASE_URL: postgres://scrinode:scrinode_ci@localhost:5432/scrinode_ci
         run: pnpm verify
+
+      - name: Confirm database tests actually ran
+        # A skipped integration suite looks identical to a passing one in the
+        # summary. This fails the build if the database was unreachable, so
+        # the suites cannot quietly stop covering anything.
+        env:
+          TEST_DATABASE_URL: postgres://scrinode:scrinode_ci@localhost:5432/scrinode_ci
+        run: |
+          output=$(pnpm --filter @scrinode/api exec vitest run \
+            src/database/migrations/migrations.test.ts --reporter=json 2>/dev/null || true)
+          echo "$output" | grep -q '"numPendingTests":0' || {
+            echo "Database integration tests were skipped. TEST_DATABASE_URL is not reaching Postgres."
+            exit 1
+          }
 
   e2e:
     name: End-to-end
@@ -52,6 +97,25 @@ jobs:
     # Runs only once the workspace is sound, so E2E failures are not noise
     # from an already-broken build.
     needs: verify
+
+    # Integration tests need a real PostgreSQL with pgvector: there is no
+    # in-process substitute that carries the extension, and a test passing
+    # against a fake engine would be worse than no test. Without this the
+    # database suites skip, which CI must never do silently.
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: scrinode
+          POSTGRES_PASSWORD: scrinode_ci
+          POSTGRES_DB: scrinode_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U scrinode"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
 
     steps:
       - uses: actions/checkout@v4
@@ -75,7 +139,11 @@ jobs:
         run: pnpm build
 
       - name: Run end-to-end tests
-        # Starts its own in-memory MongoDB; never reaches Atlas.
+        # run.mjs creates and drops its own database on this server, and
+        # refuses any host that is not local — the suite must never reach a
+        # real deployment.
+        env:
+          E2E_DATABASE_URL: postgres://scrinode:scrinode_ci@localhost:5432/postgres
         run: pnpm --filter @scrinode/e2e test:e2e
 
       - name: Upload report on failure

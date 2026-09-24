@@ -6,18 +6,16 @@ packages:
 allowBuilds:
   # Compiler used by the NestJS CLI to build @scrinode/api.
   '@swc/core': true
+  cpu-features: set this to true or false
   # Downloads a MongoDB binary so tests run against a real server without
   # touching Atlas. Test-only; never a runtime dependency.
   mongodb-memory-server: true
+  protobufjs: set this to true or false
+  ssh2: set this to true or false
 # Peer ranges we have deliberately overruled. Each must be justified, so a
 # genuine incompatibility is never lost among accepted warnings.
 peerDependencyRules:
   allowedVersions:
-    # @auth/mongodb-adapter declares mongodb ^6; the workspace runs ^7. The
-    # adapter uses only stable collection operations, verified against a real
-    # MongoDB 7 server in apps/web/src/auth/adapter.test.ts. Revisit if the
-    # adapter publishes a release declaring ^7.
-    '@auth/mongodb-adapter>mongodb': '7'
     # next-auth 4 and @auth/core declare nodemailer ^7, but every 7.x release
     # carries unpatched advisories including SMTP command injection and CRLF
     # header injection. 9.x patches them; the SMTP transport API used by

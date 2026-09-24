@@ -7,7 +7,7 @@
     translation release already uploaded from identical publisher bytes.
 
     Safe to run at any time. Idempotency comes from the run ledger in
-    MongoDB, which records the SHA256 of the publisher archive each run
+    Postgres, which records the SHA256 of the publisher archive each run
     processed. Because parsing is deterministic, an unchanged hash means
     unchanged output, so re-running is a no-op until a source actually
     changes.
@@ -45,7 +45,7 @@
 
 .NOTES
     Requires DO_SPACES_ENDPOINT, DO_SPACES_BUCKET, DO_SPACES_KEY,
-    DO_SPACES_SECRET and MONGODB_URI (for the ledger). Put them in .env at
+    DO_SPACES_SECRET and DATABASE_URL (for the ledger). Put them in .env at
     the repository root; see .env.example.
 #>
 
@@ -69,9 +69,9 @@ Assert-RequiredSetting `
     -Name @('DO_SPACES_ENDPOINT', 'DO_SPACES_BUCKET', 'DO_SPACES_KEY', 'DO_SPACES_SECRET') `
     -Purpose 'Uploading to Spaces'
 
-# The ledger lives in MongoDB so idempotency survives a rebuilt machine and
+# The ledger lives in Postgres so idempotency survives a rebuilt machine and
 # is visible to every operator, not just this one.
-Assert-RequiredSetting -Name @('MONGODB_URI') -Purpose 'Run tracking'
+Assert-RequiredSetting -Name @('DATABASE_URL') -Purpose 'Run tracking'
 
 Assert-IngestBuilt -RepositoryRoot $root
 
