@@ -6,10 +6,14 @@
 #
 # Order matters and is the point of this script:
 #
-#   1. back up, so a bad migration is recoverable
-#   2. build the new image before stopping anything
-#   3. migrate
-#   4. restart the API
+#   1. build the new image before stopping anything
+#   2. migrate
+#   3. restart the API
+#
+# There is no backup step. It ran `pg_dump` inside the Postgres container,
+# and the database is now Neon — see infra/README.md, "Backups", which is
+# an open gap rather than a solved problem. Take a Neon branch before a
+# migration you are unsure of.
 #
 # Migrations run as a deliberate step, never on application boot (see
 # apps/api/src/database/migrate.ts). Several API instances starting together
@@ -26,7 +30,6 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.prod.yml}"
-SKIP_BACKUP="${SKIP_BACKUP:-0}"
 
 compose() {
   docker compose -f "$COMPOSE_FILE" "$@"
@@ -34,32 +37,13 @@ compose() {
 
 echo "[$(date -uIs)] deploying $(git rev-parse --short HEAD)"
 
-# --- 1. backup -------------------------------------------------------------
-# A migration is the most likely reason to need one, and the least convenient
-# time to discover there isn't one.
-if [[ "$SKIP_BACKUP" != "1" ]]; then
-  echo "[$(date -uIs)] backing up first"
-  ./infra/postgres/backup.sh
-else
-  echo "[$(date -uIs)] WARNING: backup skipped (SKIP_BACKUP=1)" >&2
-fi
-
-# --- 2. build --------------------------------------------------------------
+# --- 1. build --------------------------------------------------------------
 # Before anything stops. A build failure should leave the running deployment
 # untouched rather than halfway through a restart.
 echo "[$(date -uIs)] building"
 compose build api
 
-# Postgres must be up for the migration, and may already be.
-compose up -d postgres
-
-echo "[$(date -uIs)] waiting for postgres"
-for _ in $(seq 1 30); do
-  if compose exec -T postgres pg_isready -q; then break; fi
-  sleep 2
-done
-
-# --- 3. migrate ------------------------------------------------------------
+# --- 2. migrate ------------------------------------------------------------
 # Run from the newly built image, so the migrations applied are the ones this
 # commit defines. `run --rm` gives a throwaway container rather than
 # disturbing the API that is still serving.
@@ -67,7 +51,7 @@ echo "[$(date -uIs)] migrating"
 compose run --rm --no-deps api node dist/database/migrate.js status
 compose run --rm --no-deps api node dist/database/migrate.js up
 
-# --- 4. restart ------------------------------------------------------------
+# --- 3. restart ------------------------------------------------------------
 echo "[$(date -uIs)] restarting the API"
 compose up -d api
 

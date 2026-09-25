@@ -334,8 +334,8 @@ Default stack:
 ```text
 Frontend       Next.js + React + TypeScript
 Backend        NestJS + TypeScript
-Database       PostgreSQL (self-hosted, DigitalOcean Droplet)
-Vector Search  pgvector (same database)
+Database       PostgreSQL (Neon, managed)
+Vector Search  pgvector (same database)  # 0.8.6 on Neon
 Geospatial     PostGIS (installed, unused until Phase 2)
 Auth           Auth.js / NextAuth
 State          Redux Toolkit + RTK Query
@@ -347,7 +347,7 @@ Streaming      SSE
 Email          Resend
 SMS            Termii
 Cron           Vercel Cron
-Deployment     Vercel
+Deployment     Vercel (frontends) + DigitalOcean Droplet (API)
 ```
 
 Do not replace a core technology without an explicit architectural reason.
@@ -1329,43 +1329,69 @@ Do not force heavy batch work into interactive HTTP requests.
 ```text
 Next.js    → Vercel          (reader and backoffice)
 NestJS     → DigitalOcean Droplet, containerised
-PostgreSQL → the same droplet, containerised
+PostgreSQL → Neon (managed, us-east-2) — pgvector 0.8.6, PostGIS 3.6
 Email      → Resend
 SMS        → Termii
 ```
 
-**The API runs beside the database, not on Vercel.** Postgres then publishes
-no port at all: the two reach each other over a private compose network, so
-there is no public database surface to firewall and no credential crossing
-the internet. Only the API is exposed, behind TLS.
+**The API runs on the droplet; the database is Neon.** The frontends stay on
+Vercel, hold no database credentials and benefit from its edge network.
 
-The frontends stay on Vercel. They hold no database credentials and benefit
-from its edge network.
+The database is managed rather than self-hosted, which reverses an earlier
+decision and is worth stating plainly. The droplet acquired for Postgres has
+458 MB of RAM and 8.7 GB of disk; the measured vector footprint is 5.5 GB
+across 34 sources, and `infra/postgres/README.md` records that an HNSW build
+for the full corpus wants roughly 1 GB of `maintenance_work_mem` on its own.
+Postgres, the API and Docker do not fit in 458 MB, and with no swap the OOM
+killer takes the largest process, which is Postgres.
 
-The database is self-hosted rather than managed. Managed vector search was
-metered per storage tier and the corpus outgrew its free tier before it was
-fully loaded; on a droplet, storage is disk. See `docs/BIBLE_INGESTION.md` §12
-for the measured numbers.
+**This reintroduces the metering that made Atlas unaffordable** (§22.3,
+`docs/BIBLE_INGESTION.md` §12), and that risk has not gone away — it has been
+accepted on a different provider. Neon's storage and compute cost for the
+full corpus must be checked against the plan **before** ingestion, not after.
 
-Self-hosting means backups, upgrades and monitoring are ours. Backups and
-deployment are implemented (`infra/README.md`); **monitoring is not**, and
-§34 requires it.
+The cost of managed is latency. The API and the database no longer share a
+compose network:
+
+```text
+droplet (nyc1) → Neon (us-east-2)     ~22 ms per round trip, measured
+compose network (previous topology)   sub-millisecond
+```
+
+A handler issuing five sequential queries now spends ~110 ms on round trips
+alone. §31's "common API response < 500ms" still holds, but the margin is
+real rather than free: batch in repositories, and treat an N+1 as a
+correctness problem rather than an inefficiency.
 
 Rules:
 
-- **Never publish the database port in production.** `docker-compose.prod.yml`
-  uses `expose`, not `ports`, and a test asserts it. `DATABASE_SSL=false` is
-  correct only because the connection never leaves the compose network.
+- **`DATABASE_SSL=true` in production, always.** The connection crosses the
+  public internet, so TLS is what keeps the credential off the wire; the
+  driver verifies the certificate chain, so it authenticates the server too.
+  A test asserts it, and asserts no Postgres container is defined alongside.
+- **Neon has no init hook.** A container image runs
+  `infra/postgres/init/001-extensions.sql` on first boot; Neon does not, so
+  the six extensions are a deliberate step against a new database or branch.
+  Skipping it fails migration 0001 with `gin_trgm_ops does not exist`, which
+  reads like a broken migration rather than a missing extension.
 - **Migrations run as a deploy step, never on boot.** Between the migration
   and the restart the old code serves traffic against the new schema, which
   is why §24 requires expand → migrate → contract.
 - **Deployment is gated on `DEPLOY_ENABLED`.** The CI/CD workflow carries a
-  deploy job, but it is off until that repository variable is set — the
-  droplet does not exist yet, and a pipeline that fails on every push stops
-  being read. Until then, `infra/deploy.sh` is run by hand.
+  deploy job, but it is off until that repository variable is set, and a
+  pipeline that fails on every push stops being read. Until then,
+  `infra/deploy.sh` is run by hand.
 - **Keep NestJS cloud-portable.** Containerising it serves this rather than
   working against it: the image runs anywhere, and nothing in domain code
   knows it is on a droplet.
+
+**Backups are Neon's, and that is a different recovery model.** The
+`pg_dump` scripts in `infra/postgres/` assumed a container that no longer
+exists. Neon provides branching and point-in-time restore bounded by the
+plan's retention window; a dump you hold yourself is not bounded that way and
+survives losing the account. Until that is settled, `infra/README.md` records
+what is actually in place — do not describe backups as implemented on the
+strength of scripts that cannot run.
 
 ## Scale Path
 
@@ -1375,7 +1401,7 @@ If needed:
 Next.js    → Vercel
 NestJS     → Cloud Run / ECS / Railway / Fly.io / Render
 Workers    → dedicated worker runtime
-PostgreSQL → larger droplet, then a managed Postgres offering pgvector
+PostgreSQL → larger Neon compute, or self-hosted on a sized droplet
 ```
 
 Keep NestJS cloud-portable.

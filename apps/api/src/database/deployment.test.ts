@@ -5,10 +5,14 @@ import { describe, expect, it } from 'vitest';
 /**
  * Guards the droplet deployment's safety properties.
  *
- * The API runs beside Postgres so the database needs no public port. That
- * only holds while the compose file keeps it that way, and each of these is
- * a one-line edit away from being undone — silently, because the stack would
- * still start and still work.
+ * The API runs on the droplet; the database is Neon, reached across the
+ * public internet. That topology moves the risk: there is no longer a
+ * database port to leave published, but there *is* a credential crossing a
+ * network, so TLS stops being optional and becomes the property worth
+ * guarding.
+ *
+ * Each of these is a one-line edit away from being undone — silently,
+ * because the stack would still start and still work.
  *
  * Asserted against the file rather than a running stack: these must fail in
  * CI, where no droplet exists.
@@ -20,18 +24,22 @@ describe('production deployment', () => {
   const dev = readFileSync(join(root, 'docker-compose.yml'), 'utf8');
   const dockerfile = readFileSync(join(root, 'infra/api/Dockerfile'), 'utf8');
 
-  describe('database exposure', () => {
-    it('publishes no database port', () => {
-      // The reason the API moved to the droplet. A published 5432 would put
-      // the database on the public internet, where DATABASE_SSL=false —
-      // correct for a compose network — becomes a credential in cleartext.
-      const postgresBlock = prod.slice(
-        prod.indexOf('postgres:'),
-        prod.indexOf('  api:'),
-      );
+  describe('database connection', () => {
+    it('requires TLS to the database', () => {
+      // The whole reason this differs from development. The connection to
+      // Neon crosses the public internet, so DATABASE_SSL=false would put
+      // the credential on the wire in cleartext. The driver verifies the
+      // certificate chain, so this authenticates the server too.
+      expect(prod).toMatch(/DATABASE_SSL:\s*'true'/);
+      expect(prod).not.toMatch(/DATABASE_SSL:\s*'false'/);
+    });
 
-      expect(postgresBlock).not.toMatch(/^\s+ports:/m);
-      expect(postgresBlock).toMatch(/^\s+expose:/m);
+    it('runs no database container', () => {
+      // Postgres is Neon's. A stray postgres service here would be a second
+      // database the API might reach instead — with migrations applied to
+      // one and queries served by the other.
+      expect(prod).not.toMatch(/^\s{2}postgres:/m);
+      expect(prod).not.toContain('POSTGRES_PASSWORD');
     });
 
     it('binds the API to localhost, not every interface', () => {
@@ -42,22 +50,17 @@ describe('production deployment', () => {
   });
 
   describe('credentials', () => {
-    it('gives the production password no default', () => {
+    it('gives the connection string no default', () => {
       // `:?` fails the stack when unset. A default would mean a production
-      // database accepting a password written down in this repository.
-      expect(prod).toContain('POSTGRES_PASSWORD:?');
+      // API silently pointing somewhere it should not — most likely a
+      // developer's database, and writes would look like they worked.
+      expect(prod).toContain('DATABASE_URL:?');
     });
 
     it('requires an explicit CORS allow-list', () => {
       // The API serves credentialed requests; §33 rejects a wildcard.
       expect(prod).toContain('CORS_ORIGINS:?');
       expect(prod).not.toMatch(/CORS_ORIGINS:\s*['"]?\*/);
-    });
-
-    it('composes DATABASE_URL from the Postgres variables', () => {
-      // Set separately, the API and the database could disagree about the
-      // credentials — and the failure would look like a bad password.
-      expect(prod).toContain('DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/');
     });
   });
 
@@ -70,7 +73,10 @@ describe('production deployment', () => {
     it('is a separate file, not an override of production', () => {
       // An override you can forget to pass is not a safe way to express the
       // difference between a dev default and a production requirement.
-      expect(dev).not.toContain('POSTGRES_PASSWORD:?');
+      // Development still runs its own Postgres container; production has
+      // none, so neither file can be derived from the other.
+      expect(dev).toMatch(/^\s{2}postgres:/m);
+      expect(prod).not.toMatch(/^\s{2}postgres:/m);
     });
   });
 

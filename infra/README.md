@@ -1,39 +1,60 @@
 # Droplet infrastructure
 
-Scrinode is split across two places:
+Scrinode is split across three places:
 
 ```text
-Vercel                      DigitalOcean Droplet
-  apps/web        ──HTTPS──▶  apps/api  ──compose network──▶  PostgreSQL
-  apps/backoffice                                              + pgvector
+Vercel                      DigitalOcean Droplet        Neon (us-east-2)
+  apps/web        ──HTTPS──▶  apps/api        ──TLS──▶    PostgreSQL 18
+  apps/backoffice                                          + pgvector 0.8.6
+                                                           + PostGIS 3.6
 ```
 
-**The API runs beside the database on purpose.** Postgres publishes no port
-at all: the two reach each other over a private compose network, so there is
-no public database surface to firewall and no credential crossing the
-internet. Only the API is exposed, behind TLS.
+**The database is managed, and that reverses an earlier decision.** The API
+and Postgres were to share a compose network on the droplet, so that the
+database published no port and no credential crossed the internet. The
+droplet that exists has **458 MB of RAM and 8.7 GB of disk**; the corpus is
+5.5 GB of vectors and an HNSW build for it wants ~1 GB of
+`maintenance_work_mem` alone. It does not fit, and with no swap the OOM
+killer would take Postgres.
 
-The frontends stay on Vercel because they benefit from its edge network and
-hold no database credentials. AGENTS.md §30 requires NestJS stay
-cloud-portable, and containerising it satisfies that rather than working
-against it.
+What that costs, measured rather than estimated:
+
+| | Previous (compose network) | Now (droplet nyc1 → Neon us-east-2) |
+|---|---|---|
+| Round trip | sub-millisecond | **~22 ms** |
+| Credential on the wire | never left the host | TLS, certificate verified |
+| Database port | none published | Neon's, public, authenticated |
+
+`DATABASE_SSL=true` is therefore mandatory rather than a preference, and
+`apps/api/src/database/deployment.test.ts` asserts it along with the absence
+of any Postgres service in the production compose file.
+
+A handler issuing five sequential queries now spends ~110 ms on round trips.
+That is within §31's 500 ms budget but no longer free: batch in repositories,
+and treat an N+1 as a correctness problem.
+
+**The metering risk is back.** Managed, metered storage is what made Atlas
+unaffordable (`docs/BIBLE_INGESTION.md` §12). Check Neon's cost for 5.5 GB
+plus compute against the plan **before** ingesting, not after.
 
 ## Files
 
 | File | Purpose |
 |---|---|
 | `docker-compose.yml` | Local development — publishes 5432, dev password |
-| `docker-compose.prod.yml` | The droplet — no database port, no defaults |
+| `docker-compose.prod.yml` | The droplet — API only, TLS required, no defaults |
 | `infra/api/Dockerfile` | API image, built from the repository root |
-| `infra/postgres/Dockerfile` | Postgres + pgvector + PostGIS |
-| `infra/deploy.sh` | Backup → build → migrate → restart |
-| `infra/postgres/backup.sh` | Nightly dump, verified, uploaded to Spaces |
-| `infra/postgres/restore.sh` | Restore, and the rehearsal that proves it |
+| `infra/postgres/Dockerfile` | **Development only** — Postgres + pgvector + PostGIS |
+| `infra/postgres/init/001-extensions.sql` | Extensions. Auto-runs locally; **manual against Neon** |
+| `infra/deploy.sh` | Build → migrate → restart |
+| `infra/postgres/backup.sh` | **Does not run against Neon** — see Backups |
+| `infra/postgres/restore.sh` | **Does not run against Neon** — see Backups |
 
 The two compose files are deliberately separate rather than a base and an
-override. Development publishes a port and accepts a default password;
-production must do neither, and an override you can forget to pass is not a
-safe way to express that.
+override. Development runs its own Postgres container with a default
+password; production runs no database at all and requires every credential
+to be supplied. An override you can forget to pass is not a safe way to
+express that.
 
 ## First-time provisioning
 
@@ -69,6 +90,24 @@ docker compose -f docker-compose.prod.yml up -d
 ./infra/deploy.sh
 ```
 
+### The Neon database
+
+Neon has **no init hook**. A Postgres container runs
+`infra/postgres/init/001-extensions.sql` on first boot; Neon does not, so the
+extensions must be created once against each new database or branch, before
+any migration runs:
+
+```bash
+psql "$DATABASE_URL"   -c 'CREATE EXTENSION IF NOT EXISTS vector'   -c 'CREATE EXTENSION IF NOT EXISTS pg_trgm'   -c 'CREATE EXTENSION IF NOT EXISTS fuzzystrmatch'   -c 'CREATE EXTENSION IF NOT EXISTS unaccent'   -c 'CREATE EXTENSION IF NOT EXISTS btree_gin'   -c 'CREATE EXTENSION IF NOT EXISTS postgis'
+```
+
+Skip it and migration 0001 fails with `operator class "gin_trgm_ops" does not
+exist for access method "gin"`, which reads like a broken migration rather
+than a missing extension. The `neondb_owner` role may create all six.
+
+`unaccent` must land in `public`, which is where Neon puts it — migration
+0004 qualifies the dictionary as `public.unaccent` and would fail otherwise.
+
 ### TLS
 
 Vercel calls the API over HTTPS, so it needs a certificate. Caddy is the
@@ -99,49 +138,66 @@ rejects a wildcard origin outright (§33).
 ## Configuration
 
 Lives in `.env` beside `docker-compose.prod.yml`, on the droplet only.
-Everything marked required has no default and fails the stack if unset —
-a production database must never accept a password written down in a
-repository.
+Everything marked required has no default and fails the stack if unset — a
+production API must never silently point at a database nobody named.
 
 | Variable | Required | Notes |
 |---|---|---|
-| `POSTGRES_USER` | yes | |
-| `POSTGRES_PASSWORD` | yes | `openssl rand -base64 32` |
-| `POSTGRES_DB` | yes | |
+| `DATABASE_URL` | yes | The Neon string, whole, from the Neon console |
 | `CORS_ORIGINS` | yes | Both Vercel origins, comma-separated. No wildcard. |
 | `DATABASE_POOL_MAX` | no | Default 10 |
-| `PG_SHARED_BUFFERS` | no | ~25% of RAM |
-| `PG_MAINTENANCE_WORK_MEM` | no | Sized so an HNSW build fits — see `postgres/README.md` |
-| `DO_SPACES_BUCKET` | no | Without it, backups stay on the droplet only |
-| `DO_SPACES_ENDPOINT` | no | |
+| `API_PORT` | no | Default 4000, published to localhost only |
 
-`DATABASE_URL` is composed from the Postgres variables in the compose file
-rather than set separately, so the API and the database cannot disagree about
-the credentials.
+`DATABASE_SSL` is **not** listed: the compose file hard-codes `'true'` rather
+than reading it from `.env`, so it cannot be turned off by editing a file on
+the droplet. A test asserts that.
+
+The `POSTGRES_*` and `PG_*` variables are gone from production — they
+configured the container, and there is none. They remain in `.env.example`
+for local development.
+
+**Rotate the Neon role's password if the connection string has ever been
+pasted anywhere it could be retained** — a chat log, a ticket, a shell
+history. It is the only credential guarding the database.
 
 ## Backups
 
-Nightly `pg_dump` in custom format, verified with `pg_restore --list`, kept 14
-days locally and uploaded to Spaces.
+**Not implemented against Neon. Do not assume otherwise.**
 
-**Custom format, not plain SQL**, so `pg_restore` can restore one table. After
-an accidental `DELETE` you want that table, not the whole database.
+`backup.sh` and `restore.sh` run `pg_dump` and `pg_restore` inside the
+Postgres container via `docker compose exec`. That container no longer
+exists in production, so both scripts fail there. They remain valid against
+the development compose stack, and are kept for that and for whatever
+replaces them.
 
-**Verified on write.** A dump `pg_restore` cannot read is not a backup, and
-the check is cheap enough to run every night.
+What Neon provides instead is **point-in-time restore within the plan's
+retention window**, plus branching. That is a genuinely different recovery
+model, and the difference matters:
 
-**Pruning is local only.** Spaces retention belongs in a bucket lifecycle
-rule: a droplet that deletes its own remote history is one compromise away
-from having none.
+| | `pg_dump` (what the scripts did) | Neon PITR |
+|---|---|---|
+| Restore one table after a bad `DELETE` | yes, custom format | branch, then copy across |
+| Survives losing the Neon account | yes — the file is ours | **no** |
+| Retention | 14 days local, longer in Spaces | plan's window |
+| Rehearsed | weekly cron, row counts printed | untested here |
 
-**Rehearse restores.** `restore.sh --rehearse` restores into a scratch
-database, prints row counts for the tables that would hurt to lose, and drops
-it. Safe to run from cron, and the only thing that turns a backup into a
-recovery plan.
+**The decision is open.** Either is defensible; holding neither is not.
+Until it is settled:
 
-What is actually at risk differs by table. Scripture text and retrieval units
-re-ingest from publishers and Voyage — tedious and, for embeddings, not free.
-Notes, highlights, collections and workspaces exist nowhere else.
+- The scheduled backup and restore-rehearsal cron entries below **must not**
+  be installed on the droplet — they would fail nightly and, worse, look
+  like backups exist.
+- AGENTS.md §30 states plainly that backups are Neon's and unverified.
+
+What is actually at risk differs by table. Scripture text and retrieval
+units re-ingest from publishers and Voyage — tedious and, for embeddings,
+not free. Notes, highlights, collections and workspaces exist nowhere else;
+those are the rows a retention window has to cover.
+
+A `pg_dump` against Neon from the droplet needs only the connection string
+and a `postgresql-client` package, so restoring the scripts is a small
+change — it is the schedule, the storage target and the rehearsal that make
+it a backup rather than a file.
 
 ## Deploying
 
@@ -227,5 +283,11 @@ Honest list, in the order worth doing:
 2. **No provisioning automation.** The steps above are a runbook, not code.
    Rebuilding the droplet means following them by hand.
 3. **No staging environment.** Migrations meet production first.
-4. **Single droplet.** No replica, so recovery means restoring a backup.
-   Acceptable at current scale; worth revisiting before it is not.
+4. **No backups under our control.** The `pg_dump` scripts cannot run
+   against Neon; what exists is Neon's retention window. See Backups — this
+   is the gap most likely to be discovered at the worst moment.
+5. **Neon's cost is unverified against the corpus.** 5.5 GB of vectors plus
+   compute, on a provider billed by both. Metered managed storage is what
+   made Atlas unaffordable; check the number before ingesting.
+6. **The droplet is 458 MB / 8.7 GB / 1 vCPU.** Enough for the API alone.
+   It has no headroom for anything else, and no swap.
