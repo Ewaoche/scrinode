@@ -24,6 +24,12 @@ const PROVIDED_EXTERNALLY = new Set([
   // Vitest and CI runners.
   'CI',
   'VITEST',
+  // Set by GitHub Actions. The test harness uses them to name schemas
+  // uniquely per run, so two runs sharing a managed database cannot drop
+  // each other's tables. Nobody sets these by hand, and documenting them in
+  // .env.example would imply they are configuration.
+  'GITHUB_RUN_ID',
+  'GITHUB_RUN_ATTEMPT',
   // Set by the operating system. The ingestion ledger records which machine
   // ran a stage, so a shared ledger stays attributable. Documenting these in
   // .env.example would imply they are configuration, which they are not.
