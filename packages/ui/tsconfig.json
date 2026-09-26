@@ -1,0 +1,17 @@
+{
+  "extends": "@scrinode/config/tsconfig/library.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "lib": ["ES2022", "DOM"],
+    "noEmit": true,
+    // rootDir must be restated: an inherited value would resolve relative to
+    // @scrinode/config rather than to this package.
+    "rootDir": "src",
+    // Tests are type-checked rather than excluded. Matcher types are loaded
+    // by reference directives in src/vitest-env.d.ts rather than here, since
+    // jest-dom v7 registers its Vitest matchers through a subpath.
+    "types": []
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}

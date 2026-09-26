@@ -1,23 +1,27 @@
-import { ThemeToggle } from '../components/theme-toggle';
+import { Features } from '../components/landing/features';
+import { Hero } from '../components/landing/hero';
+import { SiteFooter } from '../components/landing/site-footer';
+import { VerseBand } from '../components/landing/verse-band';
+import { Vision } from '../components/landing/vision';
 
 /**
- * Scaffold page.
+ * The coming-soon landing page.
  *
- * Proves the stack is wired — theming, tokens, fonts. It is NOT the Scripture
- * reader; that arrives with the UI build, when this is replaced entirely.
+ * Replaces the scaffold. This is not the Scripture reader — §12's reader
+ * arrives with the product; this page exists to explain what is coming and
+ * capture interest.
+ *
+ * Composed entirely from @scrinode/ui primitives, so the reader can be built
+ * from the same vocabulary rather than a second one.
  */
 export default function Home() {
   return (
-    <main style={{ padding: '2rem', maxWidth: '40rem', margin: '0 auto' }}>
-      <h1 style={{ fontFamily: 'var(--font-scripture)', fontSize: '1.75rem' }}>Scrinode</h1>
-
-      <p style={{ color: 'var(--color-text-secondary)', marginTop: '0.5rem' }}>
-        Scaffold. No interface has been designed yet.
-      </p>
-
-      <div style={{ marginTop: '2rem' }}>
-        <ThemeToggle />
-      </div>
+    <main id="top">
+      <Hero />
+      <Features />
+      <VerseBand />
+      <Vision />
+      <SiteFooter />
     </main>
   );
 }

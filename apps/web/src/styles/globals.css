@@ -126,3 +126,31 @@
     }
   }
 }
+
+/* ---------------------------------------------------------------------------
+ * Landing page responsive rules.
+ *
+ * These live here rather than inline because they are media queries, which the
+ * style attribute cannot express. Everything else in the landing components is
+ * inline and fluid (clamp, auto-fit) so that the layout adapts without a
+ * breakpoint per screen size (AGENTS.md §5).
+ * ------------------------------------------------------------------------ */
+@layer components {
+  /* The header's nav and tagline are the two things that genuinely cannot fit
+     on a phone. Hidden below the tablet breakpoint rather than wrapped: a
+     wrapped nav pushes the hero off the first screen. */
+  .scrinode-nav,
+  .scrinode-tagline {
+    display: none;
+  }
+
+  @media (min-width: 60rem) {
+    .scrinode-nav {
+      display: flex;
+    }
+
+    .scrinode-tagline {
+      display: block;
+    }
+  }
+}
