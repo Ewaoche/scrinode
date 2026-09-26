@@ -1,7 +1,15 @@
-# Scrinode droplet deployment.
+# Scrinode container deployment — SUPERSEDED, kept deliberately.
 #
-# The API runs here; the database is Neon (managed Postgres) and the reader
-# and backoffice stay on Vercel (AGENTS.md §30).
+# The API now runs on Vercel as a serverless function (AGENTS.md §30,
+# docs/PLAN_vercel_api.md). Nothing deploys this file.
+#
+# It is kept, and `apps/api/src/main.ts` is kept working, because §30 requires
+# NestJS stay cloud-portable: this is the proof that the API still runs as an
+# ordinary long-lived container, and the fallback if Vercel's function limits
+# ever stop fitting (§29's heavy work, or §18's streaming at length).
+#
+# If you run it: the database is still Neon, so DATABASE_URL and CORS_ORIGINS
+# must be supplied and TLS is mandatory. It brings up the API only.
 #
 #   docker compose -f docker-compose.prod.yml up -d
 #

@@ -347,7 +347,7 @@ Streaming      SSE
 Email          Resend
 SMS            Termii
 Cron           Vercel Cron
-Deployment     Vercel (frontends) + DigitalOcean Droplet (API)
+Deployment     Vercel (frontends and API)
 ```
 
 Do not replace a core technology without an explicit architectural reason.
@@ -1328,70 +1328,66 @@ Do not force heavy batch work into interactive HTTP requests.
 
 ```text
 Next.js    → Vercel          (reader and backoffice)
-NestJS     → DigitalOcean Droplet, containerised
+NestJS     → Vercel          (serverless functions)
 PostgreSQL → Neon (managed, us-east-2) — pgvector 0.8.6, PostGIS 3.6
 Email      → Resend
 SMS        → Termii
 ```
 
-**The API runs on the droplet; the database is Neon.** The frontends stay on
-Vercel, hold no database credentials and benefit from its edge network.
+**Everything runs on Vercel; the database is Neon.** See
+`docs/PLAN_vercel_api.md` for the deployment steps and what remains open.
 
-The database is managed rather than self-hosted, which reverses an earlier
-decision and is worth stating plainly. The droplet acquired for Postgres has
-458 MB of RAM and 8.7 GB of disk; the measured vector footprint is 5.5 GB
-across 34 sources, and `infra/postgres/README.md` records that an HNSW build
-for the full corpus wants roughly 1 GB of `maintenance_work_mem` on its own.
-Postgres, the API and Docker do not fit in 458 MB, and with no swap the OOM
-killer takes the largest process, which is Postgres.
+This reverses the droplet topology recorded earlier, and the reasoning is
+worth keeping rather than quietly replacing. The droplet was chosen so the API
+and Postgres could share a private network. The droplet that exists has 458 MB
+of RAM and 8.7 GB of disk, which cannot host Postgres alongside the API, so
+the database moved to Neon — and once the database was managed and reached
+over TLS, the API's only remaining reason to be on a droplet was portability.
 
-**This reintroduces the metering that made Atlas unaffordable** (§22.3,
-`docs/BIBLE_INGESTION.md` §12), and that risk has not gone away — it has been
-accepted on a different provider. Neon's storage and compute cost for the
-full corpus must be checked against the plan **before** ingestion, not after.
-
-The cost of managed is latency. The API and the database no longer share a
-compose network:
-
-```text
-droplet (nyc1) → Neon (us-east-2)     ~22 ms per round trip, measured
-compose network (previous topology)   sub-millisecond
-```
-
-A handler issuing five sequential queries now spends ~110 ms on round trips
-alone. §31's "common API response < 500ms" still holds, but the margin is
-real rather than free: batch in repositories, and treat an N+1 as a
-correctness problem rather than an inefficiency.
+**`main.ts` is kept working, and that is deliberate.** It binds a port and
+registers shutdown hooks, so the API still runs as a long-lived server in a
+container. A test asserts it. This is what keeps "keep NestJS cloud-portable"
+true rather than aspirational.
 
 Rules:
 
-- **`DATABASE_SSL=true` in production, always.** The connection crosses the
-  public internet, so TLS is what keeps the credential off the wire; the
-  driver verifies the certificate chain, so it authenticates the server too.
-  A test asserts it, and asserts no Postgres container is defined alongside.
-- **Neon has no init hook.** A container image runs
-  `infra/postgres/init/001-extensions.sql` on first boot; Neon does not, so
-  the six extensions are a deliberate step against a new database or branch.
-  Skipping it fails migration 0001 with `gin_trgm_ops does not exist`, which
-  reads like a broken migration rather than a missing extension.
-- **Migrations run as a deploy step, never on boot.** Between the migration
-  and the restart the old code serves traffic against the new schema, which
-  is why §24 requires expand → migrate → contract.
-- **Deployment is gated on `DEPLOY_ENABLED`.** The CI/CD workflow carries a
-  deploy job, but it is off until that repository variable is set, and a
-  pipeline that fails on every push stops being read. Until then,
-  `infra/deploy.sh` is run by hand.
-- **Keep NestJS cloud-portable.** Containerising it serves this rather than
-  working against it: the image runs anywhere, and nothing in domain code
-  knows it is on a droplet.
+- **One security baseline, two entry points.** `main.ts` (server) and
+  `api/index.ts` (Vercel) both build the app through `createApp` in
+  `app.factory.ts`, which applies helmet, the CORS allow-list, the 1 MB body
+  cap and `x-powered-by` removal. A handler that configured its own app would
+  silently serve without them, so a test asserts both import the factory and
+  neither calls `NestFactory` directly.
+- **`DATABASE_URL` uses Neon's pooled host on Vercel.** A function neither
+  shares a pool across invocations nor closes connections on shutdown — it is
+  frozen, not signalled — so direct connections accumulate until Neon refuses
+  them. Measured: the pooled endpoint also connects in half the time.
+- **Migrations use the *direct* host, never the pooled one.** `withLock` holds
+  an advisory lock on one client while the migration runs on another;
+  transaction pooling does not keep that session pinned to a backend, so the
+  lock can lapse and two deploys could migrate at once.
+- **`DATABASE_SSL=true` always.** The connection crosses the public internet;
+  the driver verifies the certificate chain, so this authenticates the server
+  as well as encrypting.
+- **Rate limiting moves to the edge.** `ThrottlerModule` counts in process
+  memory, so on functions its 10/s becomes 10/s *per instance* — no limit
+  under load. Vercel WAF enforces it instead, which also avoids invoking a
+  function to reject a request. The cost is honest and should not be glossed:
+  **those rules live in Vercel project configuration, not in this repository**,
+  so they are not reviewable in a diff and CI cannot assert them.
+  `docs/PLAN_vercel_api.md` §3 records what production must have.
+- **Heavy work stays out of the API** (§29). Ingestion, embedding and
+  reindexing run from `@scrinode/ingest` as a CLI. Function limits now make
+  this a hard boundary rather than a preference.
 
-**Backups are Neon's, and that is a different recovery model.** The
-`pg_dump` scripts in `infra/postgres/` assumed a container that no longer
-exists. Neon provides branching and point-in-time restore bounded by the
-plan's retention window; a dump you hold yourself is not bounded that way and
-survives losing the account. Until that is settled, `infra/README.md` records
-what is actually in place — do not describe backups as implemented on the
-strength of scripts that cannot run.
+**Backups remain unsolved.** Neon provides point-in-time restore within the
+plan's retention window; a dump we hold ourselves survives losing the account
+and does not exist. `infra/README.md` records the trade honestly — do not
+describe backups as implemented.
+
+**The metering risk is unchanged.** Managed, metered storage is what made
+Atlas unaffordable (§22.3). Measured on a loaded database: 6,555 B per
+embedded unit, so 34 sources is ~8.7 GB with verse-level units and ~2.2 GB
+without. `docs/PLAN_neon_cost.md` has the numbers and the levers.
 
 ## Scale Path
 
@@ -1399,7 +1395,7 @@ If needed:
 
 ```text
 Next.js    → Vercel
-NestJS     → Cloud Run / ECS / Railway / Fly.io / Render
+NestJS     → Cloud Run / ECS / Railway / Fly.io / Render (main.ts already does this)
 Workers    → dedicated worker runtime
 PostgreSQL → larger Neon compute, or self-hosted on a sized droplet
 ```
