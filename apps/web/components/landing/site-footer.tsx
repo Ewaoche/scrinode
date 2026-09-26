@@ -1,4 +1,4 @@
-import { LeafMark } from '@scrinode/ui';
+import { LeafMark, Scene } from '@scrinode/ui';
 
 const LINKS = [
   { label: 'About', href: '#about' },
@@ -7,13 +7,25 @@ const LINKS = [
   { label: 'Contact', href: '#contact' },
 ];
 
+/**
+ * The footer.
+ *
+ * Uses `/bgs/footer.jpg` behind a strong scrim rather than a flat colour. The
+ * scrim does more work here than in the hero: footer text is small, and §32's
+ * contrast requirement is stricter for small text than for a headline, so the
+ * image has to recede further.
+ */
 export function SiteFooter() {
   return (
+    <Scene
+      tone="depth"
+      image="/bgs/footer.jpg"
+      scrim="veil"
+      style={{ borderTop: '1px solid rgba(255,255,255,0.08)' }}
+    >
     <footer
       id="about"
       style={{
-        background: '#101725',
-        borderTop: '1px solid rgba(255,255,255,0.08)',
         padding: 'clamp(1.75rem, 4vw, 2.25rem) clamp(1rem, 4vw, 3rem)',
       }}
     >
@@ -77,5 +89,6 @@ export function SiteFooter() {
         </p>
       </div>
     </footer>
+    </Scene>
   );
 }

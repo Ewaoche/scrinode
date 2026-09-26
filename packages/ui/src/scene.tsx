@@ -29,7 +29,7 @@ export interface SceneProps {
   /** Optional photograph. Absent is a supported, designed state. */
   readonly image?: string;
   /** How heavily to darken the image so overlaid text stays legible. */
-  readonly scrim?: 'none' | 'soft' | 'strong';
+  readonly scrim?: 'none' | 'soft' | 'strong' | 'veil';
   readonly className?: string;
   readonly style?: CSSProperties;
   readonly children?: ReactNode;
@@ -66,12 +66,21 @@ const TONES: Record<SceneTone, string> = {
   depth: 'linear-gradient(180deg, #10151f 0%, #172033 100%)',
 };
 
-/** Scrim strengths. `strong` is for a full headline over a busy photograph. */
-const SCRIMS: Record<'none' | 'soft' | 'strong', string | undefined> = {
+/**
+ * Scrim strengths.
+ *
+ * `strong` is directional — it darkens hardest on the left, where a hero's
+ * headline sits, and lets the photograph breathe on the right. `veil` is flat
+ * and heavier, for small text: §32's contrast requirement is stricter below
+ * 18pt, so a footer's 13px links need the image to recede further than a
+ * 5rem headline does.
+ */
+const SCRIMS: Record<'none' | 'soft' | 'strong' | 'veil', string | undefined> = {
   none: undefined,
   soft: 'linear-gradient(180deg, rgba(16,21,31,0.55) 0%, rgba(16,21,31,0.38) 55%, rgba(16,21,31,0.62) 100%)',
   strong:
     'linear-gradient(100deg, rgba(16,21,31,0.90) 0%, rgba(16,21,31,0.72) 42%, rgba(16,21,31,0.45) 100%)',
+  veil: 'linear-gradient(180deg, rgba(13,18,27,0.90) 0%, rgba(13,18,27,0.93) 100%)',
 };
 
 export function Scene({

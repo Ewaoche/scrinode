@@ -48,6 +48,24 @@ describe('Scene', () => {
     expect(getByText('Scripture')).toBeInTheDocument();
   });
 
+  it('veils a photograph more heavily than it scrims a hero', () => {
+    // Small text needs the image to recede further than a headline does
+    // (§32 sets a higher contrast bar below 18pt), so the footer's veil must
+    // be the heavier of the two rather than merely different.
+    const opacity = (scrim: 'strong' | 'veil') => {
+      const { container } = render(<Scene image="/p.jpg" scrim={scrim} />);
+      const values = layers(container)
+        .map((el) => (el as HTMLElement).style.background)
+        .join(' ')
+        .match(/rgba\([\d\s,]+?,\s*([\d.]+)\)/g);
+      return Math.min(...(values ?? []).map((v) => Number(v.match(/([\d.]+)\)$/)?.[1] ?? 1)));
+    };
+
+    // Compare the *lightest* point of each: a directional scrim is only as
+    // good as the spot where it lets the most light through.
+    expect(opacity('veil')).toBeGreaterThan(opacity('strong'));
+  });
+
   it('omits the scrim only when explicitly asked', () => {
     const { container } = render(<Scene scrim="none" />);
 

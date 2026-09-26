@@ -6,14 +6,19 @@ import { SiteHeader } from './site-header';
 /**
  * The hero.
  *
- * `image` is intentionally unset. The design calls for Jerusalem at golden
- * hour; the gradient treatment behind it is built to stand on its own until
- * licensed photography exists (§21 — provenance applies to imagery too, and an
- * unattributed photograph is not shippable).
+ * The backdrop is `/bgs/header.jpg`, converted from a 2.6 MB PNG to a 430 KB
+ * progressive JPEG. The source had no alpha channel, so JPEG loses nothing;
+ * progressive matters because this image is the first thing painted and §31
+ * targets a 2 s app shell.
+ *
+ * The `strong` scrim is not optional decoration. This photograph carries a
+ * bright sky, and white headline text over it would fail §32's AA contrast
+ * target wherever the sun sits — see Scene for why a per-pixel measurement
+ * cannot answer that.
  */
 export function Hero({ onJoin }: { onJoin?: (email: string) => Promise<void> }) {
   return (
-    <Scene tone="dawn" scrim="strong" style={{ minHeight: '100svh', display: 'flex', flexDirection: 'column' }}>
+    <Scene tone="dawn" image="/bgs/header.jpg" scrim="strong" style={{ minHeight: '100svh', display: 'flex', flexDirection: 'column' }}>
       <SiteHeader />
 
       <div
