@@ -47,7 +47,17 @@ export function jsdomConfig(overrides = {}) {
     ...rest,
     test: {
       environment: 'jsdom',
-      include: ['src/**/*.test.{ts,tsx}'],
+      // Not scoped to `src/`: the Next.js apps keep `app/`, `components/`
+      // and the rest at their own root, because Next resolves `middleware.ts`
+      // relative to the project root and a nested `src/` changes that. The
+      // exclusions below are what `src/` used to buy.
+      include: ['**/*.test.{ts,tsx}'],
+      exclude: [
+        '**/node_modules/**',
+        '**/.next/**',
+        '**/dist/**',
+        '**/.vitest/**',
+      ],
       setupFiles: ['./vitest.setup.ts'],
       globals: true,
       // Vitest 5 removed `poolOptions`; `maxWorkers` is top-level now.

@@ -13,7 +13,7 @@ peerDependencyRules:
     # next-auth 4 and @auth/core declare nodemailer ^7, but every 7.x release
     # carries unpatched advisories including SMTP command injection and CRLF
     # header injection. 9.x patches them; the SMTP transport API used by
-    # EmailProvider is unchanged. Verified by apps/web/src/auth/nodemailer.test.ts.
+    # EmailProvider is unchanged. Verified by apps/web/auth/nodemailer.test.ts.
     'next-auth>nodemailer': '9'
     '@auth/core>nodemailer': '9'
 

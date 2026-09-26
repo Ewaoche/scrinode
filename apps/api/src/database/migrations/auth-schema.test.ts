@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 /**
  * Guards the auth schema duplicated in the reader app's adapter test.
  *
- * `apps/web/src/auth/adapter.test.ts` creates the auth tables itself, because
+ * `apps/web/auth/adapter.test.ts` creates the auth tables itself, because
  * `@scrinode/web` may not depend on `@scrinode/api` (AGENTS.md §8). That
  * duplicate is only useful while it matches migration 0003 — a copy that
  * drifts would let the adapter tests pass against a schema production does
@@ -18,7 +18,7 @@ describe('auth schema stays in step with the reader app', () => {
   const migration = readFileSync(join(__dirname, '0003-auth-tables.ts'), 'utf8');
 
   const adapterTest = readFileSync(
-    join(__dirname, '../../../../web/src/auth/adapter.test.ts'),
+    join(__dirname, '../../../../web/auth/adapter.test.ts'),
     'utf8',
   );
 

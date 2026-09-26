@@ -10,7 +10,7 @@ export default [
       'The backoffice is a separate application and a separate security domain.',
   }),
   {
-    files: ['src/**/*.{ts,tsx}'],
+    files: ['**/*.{ts,tsx}'],
     languageOptions: {
       parserOptions: {
         ecmaFeatures: { jsx: true },

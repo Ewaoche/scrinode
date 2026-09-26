@@ -10,7 +10,7 @@ export default [
       'Scripture reading concerns belong to @scrinode/web (AGENTS.md §8, §51.2).',
   }),
   {
-    files: ['src/**/*.{ts,tsx}'],
+    files: ['**/*.{ts,tsx}'],
     languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } },
   },
 ];
