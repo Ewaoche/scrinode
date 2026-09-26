@@ -53,19 +53,45 @@ marginal cost is separated from the row it sits on:
 | HNSW index entry | **2,754** |
 | **Total per embedded unit** | **3,503** |
 
+**Superseded by the full run — this understated it by 1.9×.** With all 41,829
+BSB units embedded, the measured figure is **6,555 B per unit**:
+
+| | total | per unit |
+|---|---|---|
+| `retrieval_units` heap | 34.7 MB | 870 B |
+| **TOAST** (out-of-line vectors) | **113 MB** | **2,833 B** |
+| HNSW index | 108.5 MB | 2,720 B |
+| Other indexes | 5.7 MB | 143 B |
+| **Total** | **261.5 MB** | **6,555 B** |
+
+The 3,503 figure was measured on a 580-row probe, where the vectors fitted
+inline. At scale they do not: a `halfvec(1024)` is ~2 KB, and Postgres moves a
+value that large **out of the heap into TOAST**, which `pg_relation_size` does
+not count. Only `pg_total_relation_size` sees it. The earlier probe's
+"marginal 297 B" was measuring a compressed inline value, not the real cost.
+
+This is the single most useful number in this document, and a small probe
+could not have produced it.
+
 **The vector is nearly free; the index is the cost.** 2,754 of 3,503 bytes —
 79% — is HNSW. This matters for which levers work: dropping verse-level units
 helps because it removes *index entries*, not because it saves vector bytes.
 
+Extrapolating at the **measured** 6,555 B/unit:
+
 | Scope | Size |
 |---|---|
-| BSB, all 41,829 units | **0.14 GB** |
-| Passages + chapters, 34 sources | **1.19 GB** |
-| All 34 sources, all unit types | **4.64 GB** |
+| BSB, all 41,829 units | **0.26 GB** (measured, not projected) |
+| Passages + chapters, 34 sources | **2.23 GB** |
+| All 34 sources, all unit types | **8.68 GB** |
 
-So **4.64 GB**, not the 6.8 GB the synthetic probe projected and not the
-2.7 GB §12 projects. §12 counted raw vector bytes only, omitting both row
-overhead and the index.
+The whole database, with one translation fully loaded and embedded, is
+**338.6 MB**.
+
+So the honest range for 34 sources is **2.2 GB if verse units are dropped,
+8.7 GB if not** — against §12's 2.7 GB and this plan's own earlier 4.64 GB.
+Every prior estimate here was too low, in each case by omitting a storage
+layer rather than by misjudging the vectors.
 
 ### 2.2 Embedding is not the expensive part
 
@@ -187,7 +213,8 @@ distinctive enough to surface its passage.
 
 Measured against the loaded corpus: verses are 31,086 of BSB's 41,829 units
 (**74%**), and passages plus chapters are the remaining 26%. Dropping verse
-units takes all 34 sources from **4.64 GB to 1.19 GB**.
+units takes all 34 sources from **8.68 GB to 2.23 GB** — a 6.4 GB saving,
+which is now the largest single lever in this document.
 
 Because re-embedding costs cents (§2.2), this is reversible: embed passages
 and chapters first, measure retrieval quality, and add verse units only if
