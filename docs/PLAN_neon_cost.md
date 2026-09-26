@@ -34,7 +34,71 @@ storage — see §6.
 
 ---
 
-## 2. The corpus is larger than §12 says
+## 2. Measured against a loaded database
+
+**This section was revised after a trial ingestion.** The first version
+extrapolated from a 2,000-row synthetic probe and was wrong in both
+directions. What follows is measured against BSB actually loaded into Neon:
+31,086 verses, 41,829 retrieval units.
+
+### 2.1 What a row actually costs
+
+Isolated by copying only the embedded rows into a probe table, so the vector's
+marginal cost is separated from the row it sits on:
+
+| | B/row |
+|---|---|
+| Row without vector | 452 |
+| Marginal cost of the `halfvec(1024)` | **297** |
+| HNSW index entry | **2,754** |
+| **Total per embedded unit** | **3,503** |
+
+**The vector is nearly free; the index is the cost.** 2,754 of 3,503 bytes —
+79% — is HNSW. This matters for which levers work: dropping verse-level units
+helps because it removes *index entries*, not because it saves vector bytes.
+
+| Scope | Size |
+|---|---|
+| BSB, all 41,829 units | **0.14 GB** |
+| Passages + chapters, 34 sources | **1.19 GB** |
+| All 34 sources, all unit types | **4.64 GB** |
+
+So **4.64 GB**, not the 6.8 GB the synthetic probe projected and not the
+2.7 GB §12 projects. §12 counted raw vector bytes only, omitting both row
+overhead and the index.
+
+### 2.2 Embedding is not the expensive part
+
+Measured from a one-book trial: 580 units, 44,226 tokens, **0.2168
+tokens/char**. Projected at Voyage's list rate:
+
+| Scope | Tokens | Approx. cost |
+|---|---|---|
+| Finish BSB (41,249 units) | 3.2M | **~$0.19** |
+| Nine more translations, all units | 29.0M | **~$1.74** |
+
+This was assumed to be a significant cost and is not. **Re-embedding is
+therefore affordable**, which changes the risk calculus: a decision to drop
+verse units is reversible for cents, so it can be made on measurement rather
+than prediction.
+
+### 2.3 Full-text indexes cost more than the text
+
+Unexpected, and it applies to every translation loaded whether or not it is
+embedded:
+
+```text
+translation_texts   22 MB heap   38 MB indexes
+```
+
+The `search_vector` GIN index, the accent-aware trigram index and the scoped
+composite index together outweigh the Scripture. Not wrong — §14 needs all
+three — but it means **loading a translation is not free even with no
+vectors**, which the earlier plan implied.
+
+### 2.4 Superseded: the corpus is larger than §12 says
+
+*(Retained for the reasoning; the numbers are superseded by §2.1.)*
 
 §12 projected 2.7 GB for all 34 sources at `halfvec`. That counted raw
 vector bytes only. Measured on Neon at 2,000 rows per table, 1024
@@ -121,9 +185,13 @@ The Verse Inspector looks a verse up **by reference** from
 only when a question targets one specific verse whose wording is not
 distinctive enough to surface its passage.
 
-Measured impact: passages alone are roughly **13.5%** of units, so this takes
-all 34 sources from ~6.8 GB to **~0.9 GB**. That is the difference between
-a paid tier and possibly none.
+Measured against the loaded corpus: verses are 31,086 of BSB's 41,829 units
+(**74%**), and passages plus chapters are the remaining 26%. Dropping verse
+units takes all 34 sources from **4.64 GB to 1.19 GB**.
+
+Because re-embedding costs cents (§2.2), this is reversible: embed passages
+and chapters first, measure retrieval quality, and add verse units only if
+§14's `semantic_query` class demonstrably needs them.
 
 **Recommended: embed passages for all sources, and verses for BSB only**
 (~0.9 GB + 0.17 GB ≈ **1.1 GB**). Retrieval quality for the primary English
