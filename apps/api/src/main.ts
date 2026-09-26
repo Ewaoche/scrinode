@@ -1,51 +1,20 @@
-import 'reflect-metadata';
 import { Logger } from '@nestjs/common';
-import { NestFactory } from '@nestjs/core';
-import type { NestExpressApplication } from '@nestjs/platform-express';
-import helmet from 'helmet';
-import { AppModule } from './app.module';
+import { createApp } from './app.factory';
 import { loadEnv } from './config/env.config';
 
+/**
+ * The long-lived server entry point.
+ *
+ * Used for local development and for any container deployment. Vercel uses
+ * `api/index.ts` instead, which shares `createApp` — everything in §33's
+ * baseline lives there so the two paths cannot diverge.
+ */
 async function bootstrap(): Promise<void> {
   // Validate before Nest starts, so a bad environment fails immediately and
   // with a readable message rather than part-way through wiring.
   const env = loadEnv();
 
-  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
-    // The API serves JSON to two known frontends; it renders nothing and is
-    // never embedded. Defaults are therefore restrictive.
-    bodyParser: true,
-  });
-
-  app.use(
-    helmet({
-      // No HTML is served, so a content security policy has nothing to
-      // govern. Frame and sniffing protections still apply to error bodies.
-      contentSecurityPolicy: false,
-      crossOriginResourcePolicy: { policy: 'same-site' },
-      hsts: env.NODE_ENV === 'production' ? { maxAge: 31_536_000, includeSubDomains: true } : false,
-    }),
-  );
-
-  // Explicit allow-list rather than a wildcard: the API serves credentialed
-  // requests, and the schema rejects '*' outright (AGENTS.md §33).
-  app.enableCors({
-    origin: env.CORS_ORIGINS,
-    credentials: true,
-    methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
-    maxAge: 86_400,
-  });
-
-  // Reject oversized payloads before they are parsed. Scrinode's writes are
-  // notes and workspace blocks, not uploads.
-  app.useBodyParser('json', { limit: '1mb' });
-
-  // Request validation is applied per-route with ZodValidationPipe, using the
-  // schemas in @scrinode/validation. See src/common/zod-validation.pipe.ts.
-
-  // Never advertise the framework to an attacker fingerprinting the stack.
-  app.getHttpAdapter().getInstance().disable('x-powered-by');
+  const app = await createApp(env);
 
   // Close in-flight requests and release the connection pool on SIGTERM.
   //
@@ -54,15 +23,17 @@ async function bootstrap(): Promise<void> {
   // holding connections until they time out — which a rolling restart can
   // turn into exhausted max_connections (DatabaseModule.onApplicationShutdown
   // is what actually closes the pool).
+  //
+  // Only meaningful for a process we own. A serverless invocation is frozen
+  // rather than signalled, so the handler does not call this.
   app.enableShutdownHooks();
 
   // Bind to every interface, not just loopback.
   //
   // Without an explicit host, Node may bind to localhost only, and inside a
-  // container that means nothing outside it can connect — including Docker's
-  // own healthcheck and the reverse proxy. The container boundary is the
-  // isolation here: the droplet's firewall and compose network decide what
-  // can reach this port, not the bind address.
+  // container that means nothing outside it can connect — including the
+  // healthcheck and any reverse proxy. The container boundary is the
+  // isolation here, not the bind address.
   await app.listen(env.API_PORT, '0.0.0.0');
 
   Logger.log(`API listening on port ${env.API_PORT}`, 'Bootstrap');

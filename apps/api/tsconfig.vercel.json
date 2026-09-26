@@ -1,0 +1,17 @@
+{
+  // Typechecks the Vercel serverless entry point.
+  //
+  // Separate from tsconfig.json because `api/index.ts` sits outside `src`, and
+  // widening `rootDir` to include it moves every build artefact down a level —
+  // dist/main.js becomes dist/src/main.js, which breaks `pnpm start`, the
+  // migrate scripts and the container's CMD. Vercel compiles the handler
+  // itself, so this config exists only to keep it under typecheck rather than
+  // to emit anything.
+  "extends": "@scrinode/config/tsconfig/nest.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "."
+  },
+  "include": ["src/**/*", "api/**/*"],
+  "exclude": ["node_modules", "dist", "**/*.test.ts"]
+}
