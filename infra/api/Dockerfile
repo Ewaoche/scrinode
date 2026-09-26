@@ -92,6 +92,12 @@ EXPOSE 4000
 
 # Uses the API's own readiness endpoint, so the check exercises the database
 # connection rather than only proving the process is up.
+#
+# The endpoint caches a healthy verdict for 60 s (see health.service.ts), so
+# this 30 s interval does not translate into a query per probe. That matters
+# now the database is Neon: 2,880 queries a day would keep its compute awake
+# permanently and bill for it. Widening the interval here instead would have
+# slowed outage detection; caching keeps both.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:'+(process.env.API_PORT||4000)+'/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
