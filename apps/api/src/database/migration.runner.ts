@@ -219,6 +219,15 @@ export class MigrationRunner {
    * The key is arbitrary but must be stable and unique to this purpose; it is
    * a fixed constant rather than a hash so it can be searched for when a lock
    * shows up in `pg_locks`.
+   *
+   * **Run migrations against a direct connection, never a PgBouncer pooled
+   * one.** The lock is taken on a client of its own and held while `work()`
+   * issues its statements on the shared pool — deliberately, so a migration
+   * can use the pool normally. That only serialises anything if the holding
+   * session stays pinned to one backend, which transaction pooling does not
+   * promise: the session can be returned between statements and the lock
+   * released early, letting two concurrent deploys migrate the same database.
+   * Neon's pooled host is therefore wrong for this, and `.env.example` says so.
    */
   private async withLock<T>(work: () => Promise<T>): Promise<T> {
     const client = await this.pool.connect();

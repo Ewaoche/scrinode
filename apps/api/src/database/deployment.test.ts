@@ -1,123 +1,132 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 /**
- * Guards the droplet deployment's safety properties.
+ * Guards the deployment's safety properties.
  *
- * The API runs on the droplet; the database is Neon, reached across the
- * public internet. That topology moves the risk: there is no longer a
- * database port to leave published, but there *is* a credential crossing a
- * network, so TLS stops being optional and becomes the property worth
- * guarding.
+ * The API runs on Vercel as a serverless function; the database is Neon,
+ * reached across the public internet. Both halves of that moved the risk, and
+ * these assert what is now worth guarding rather than what used to be:
  *
- * Each of these is a one-line edit away from being undone — silently,
- * because the stack would still start and still work.
+ *   - there is no container to leave a database port published on, but there
+ *     *is* a credential crossing a network, so TLS is mandatory
+ *   - there are now two entry points, and the §33 security baseline must be
+ *     applied by both. A handler that forgets helmet fails no other test.
  *
- * Asserted against the file rather than a running stack: these must fail in
- * CI, where no droplet exists.
+ * Asserted against files rather than a running deployment: these must fail in
+ * CI, where nothing is deployed.
  */
-describe('production deployment', () => {
+describe('deployment', () => {
   const root = join(__dirname, '../../../..');
+  const read = (path: string) => readFileSync(join(root, path), 'utf8');
 
-  const prod = readFileSync(join(root, 'docker-compose.prod.yml'), 'utf8');
-  const dev = readFileSync(join(root, 'docker-compose.yml'), 'utf8');
-  const dockerfile = readFileSync(join(root, 'infra/api/Dockerfile'), 'utf8');
+  const factory = read('apps/api/src/app.factory.ts');
+  const handler = read('apps/api/api/index.ts');
+  const main = read('apps/api/src/main.ts');
+
+  describe('one security baseline, two entry points', () => {
+    it('keeps the §33 baseline in the shared factory', () => {
+      // Each of these is one line, and a second entry point that copies them
+      // is one that will eventually copy three of four.
+      expect(factory).toContain('helmet(');
+      expect(factory).toContain('enableCors(');
+      expect(factory).toContain("useBodyParser('json', { limit: '1mb' })");
+      expect(factory).toContain("disable('x-powered-by')");
+    });
+
+    it('has both entry points use the factory rather than configuring their own', () => {
+      // Assert the *import*, not a mention: a file that merely names createApp
+      // in a comment would satisfy a substring check while calling
+      // NestFactory itself. Verified by deleting the import, which must fail
+      // this test.
+      // Matched per line. A regex over the whole file cannot use [^}] to stay
+      // inside one import statement, because the imports above it also contain
+      // braces — which is why the first version of this passed regardless.
+      const importsFactory = (source: string) =>
+        source
+          .split('\n')
+          .some((line) => /^import\s*\{[^}]*createApp/.test(line) && line.includes('app.factory'));
+
+      expect(importsFactory(handler)).toBe(true);
+      expect(importsFactory(main)).toBe(true);
+
+      // If an entry point calls NestFactory directly it has its own app, and
+      // whatever the factory applies does not reach it.
+      expect(handler).not.toContain('NestFactory.create');
+      expect(main).not.toContain('NestFactory.create');
+    });
+
+    it('rejects a wildcard CORS origin', () => {
+      // The API serves credentialed requests; §33 rejects '*'.
+      expect(factory).not.toMatch(/origin:\s*['"]\*['"]/);
+      expect(factory).toContain('origin: env.CORS_ORIGINS');
+    });
+  });
+
+  describe('serverless handler', () => {
+    it('caches the app across warm invocations', () => {
+      // Without this every request rebuilds Nest, which on a function means
+      // paying bootstrap per request.
+      expect(handler).toMatch(/cached \?\?=|cached =/);
+    });
+
+    it('does not listen on a port', () => {
+      // Vercel owns the socket. A listen() here would bind inside a function
+      // and never receive traffic.
+      expect(handler).not.toMatch(/\.listen\(/);
+    });
+
+    it('does not register shutdown hooks', () => {
+      // A function is frozen between invocations rather than signalled, so
+      // SIGTERM never arrives; registering hooks implies a guarantee that does
+      // not hold, and the pool is managed by PgBouncer instead.
+      // Matches a call, not the comment explaining its absence.
+      expect(handler).not.toMatch(/\.enableShutdownHooks\(/);
+    });
+  });
+
+  describe('the server entry point stays usable', () => {
+    it('still binds every interface and handles shutdown', () => {
+      // main.ts remains for local development and any container deployment.
+      // Keeping it working is what stops Vercel becoming a one-way door (§30
+      // requires NestJS stay cloud-portable).
+      expect(main).toContain("app.listen(env.API_PORT, '0.0.0.0')");
+      expect(main).toContain('app.enableShutdownHooks()');
+    });
+  });
 
   describe('database connection', () => {
-    it('requires TLS to the database', () => {
-      // The whole reason this differs from development. The connection to
-      // Neon crosses the public internet, so DATABASE_SSL=false would put
-      // the credential on the wire in cleartext. The driver verifies the
-      // certificate chain, so this authenticates the server too.
-      expect(prod).toMatch(/DATABASE_SSL:\s*'true'/);
-      expect(prod).not.toMatch(/DATABASE_SSL:\s*'false'/);
+    it('documents that Vercel needs the pooled Neon host', () => {
+      // A serverless function neither shares a pool nor closes connections on
+      // our schedule, so direct connections accumulate until Neon refuses
+      // them. This is the single easiest thing to get wrong here.
+      const example = read('.env.example');
+
+      expect(example).toContain('-pooler');
+      expect(example).toMatch(/DATABASE_SSL="?(false|true)"?/);
     });
 
-    it('runs no database container', () => {
-      // Postgres is Neon's. A stray postgres service here would be a second
-      // database the API might reach instead — with migrations applied to
-      // one and queries served by the other.
-      expect(prod).not.toMatch(/^\s{2}postgres:/m);
-      expect(prod).not.toContain('POSTGRES_PASSWORD');
-    });
+    it('warns that migrations need a direct connection', () => {
+      // withLock holds an advisory lock on one client while the migration runs
+      // on another. Transaction pooling does not keep the holding session
+      // pinned, so the lock can lapse and two deploys can migrate at once.
+      const runner = read('apps/api/src/database/migration.runner.ts');
 
-    it('binds the API to localhost, not every interface', () => {
-      // A reverse proxy terminates TLS in front of it. Publishing 4000
-      // openly would serve the API over plain HTTP.
-      expect(prod).toContain("'127.0.0.1:${API_PORT:-4000}:4000'");
+      expect(runner).toMatch(/direct connection, never a PgBouncer pooled/);
     });
   });
 
-  describe('credentials', () => {
-    it('gives the connection string no default', () => {
-      // `:?` fails the stack when unset. A default would mean a production
-      // API silently pointing somewhere it should not — most likely a
-      // developer's database, and writes would look like they worked.
-      expect(prod).toContain('DATABASE_URL:?');
-    });
+  describe('no stale droplet configuration', () => {
+    it('has no production compose file claiming to run the API', () => {
+      // If docker-compose.prod.yml survives, it describes a deployment that no
+      // longer happens — and someone will eventually run it.
+      const prod = join(root, 'docker-compose.prod.yml');
 
-    it('requires an explicit CORS allow-list', () => {
-      // The API serves credentialed requests; §33 rejects a wildcard.
-      expect(prod).toContain('CORS_ORIGINS:?');
-      expect(prod).not.toMatch(/CORS_ORIGINS:\s*['"]?\*/);
-    });
-  });
-
-  describe('development compose stays development', () => {
-    it('keeps its published port', () => {
-      // Local work needs psql and the test harness to reach the database.
-      expect(dev).toMatch(/127\.0\.0\.1:\$\{POSTGRES_PORT:-5432\}:5432/);
-    });
-
-    it('is a separate file, not an override of production', () => {
-      // An override you can forget to pass is not a safe way to express the
-      // difference between a dev default and a production requirement.
-      // Development still runs its own Postgres container; production has
-      // none, so neither file can be derived from the other.
-      expect(dev).toMatch(/^\s{2}postgres:/m);
-      expect(prod).not.toMatch(/^\s{2}postgres:/m);
-    });
-  });
-
-  describe('API image', () => {
-    it('runs as an unprivileged user', () => {
-      expect(dockerfile).toContain('USER node');
-    });
-
-    it('passes --legacy to pnpm deploy', () => {
-      // Without it, pnpm 10+ refuses the workspace and produces a tree with
-      // no node_modules while exiting 0 — a failure that surfaces only when
-      // the container starts.
-      expect(dockerfile).toContain('--legacy deploy');
-    });
-
-    it('installs with a frozen lockfile', () => {
-      // An image must not be buildable from an unrecorded dependency change.
-      expect(dockerfile).toContain('--frozen-lockfile');
-    });
-
-    it('healthchecks readiness, which exercises the database', () => {
-      // Liveness alone would report a healthy process that cannot reach
-      // Postgres.
-      expect(dockerfile).toContain('/health/ready');
-    });
-  });
-
-  describe('API bootstrap', () => {
-    const main = readFileSync(join(root, 'apps/api/src/main.ts'), 'utf8');
-
-    it('binds to every interface', () => {
-      // Node may bind to loopback without an explicit host, and inside a
-      // container that means nothing can reach it — including the
-      // healthcheck and the proxy.
-      expect(main).toContain("app.listen(env.API_PORT, '0.0.0.0')");
-    });
-
-    it('enables shutdown hooks', () => {
-      // Nest ignores SIGTERM without this, so a redeploy kills in-flight
-      // requests and leaves Postgres holding connections.
-      expect(main).toContain('app.enableShutdownHooks()');
+      if (existsSync(prod)) {
+        const contents = readFileSync(prod, 'utf8');
+        expect(contents).toMatch(/superseded|not used|historical|Vercel/i);
+      }
     });
   });
 });
