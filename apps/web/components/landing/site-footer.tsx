@@ -1,5 +1,22 @@
 import { LeafMark, Scene } from '@scrinode/ui';
 
+/**
+ * The copyright year, fixed rather than computed.
+ *
+ * `new Date().getFullYear()` at render time is a hydration hazard: the server
+ * and the browser evaluate it separately, and across New Year in different
+ * time zones they disagree — server in UTC reading 2027 while a browser in
+ * UTC-5 still reads 2026. React reports that as a mismatch and does not patch
+ * it up.
+ *
+ * It is also wrong in the other direction under static rendering, where the
+ * year is baked in at build time and then never changes.
+ *
+ * A constant is honest about what this is: a value someone updates, once a
+ * year, deliberately.
+ */
+const COPYRIGHT_YEAR = 2026;
+
 const LINKS = [
   { label: 'About', href: '#about' },
   { label: 'Features', href: '#features' },
@@ -85,7 +102,7 @@ export function SiteFooter() {
         </nav>
 
         <p style={{ margin: 0, fontSize: '0.75rem', color: 'rgba(243,240,232,0.5)' }}>
-          © {new Date().getFullYear()} Scrinode. All rights reserved.
+          © {COPYRIGHT_YEAR} Scrinode. All rights reserved.
         </p>
       </div>
     </footer>
