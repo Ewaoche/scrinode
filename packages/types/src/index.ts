@@ -18,6 +18,17 @@ export type {
 
 export type { ScriptureContext, SelectionScope } from './context.js';
 
+export type {
+  Study,
+  StudyStatus,
+  StudyMemory,
+  Conversation,
+  ZedekMessage,
+  MessageRole,
+} from './zedek.js';
+
+export type { ZedekStreamEvent, ZedekStatus, ZedekRequest } from './zedek-stream.js';
+
 export type { SourceProvenance, Citation } from './provenance.js';
 
 export type {

@@ -152,6 +152,64 @@ Responsibilities:
 
 Zedek is an assistant, not a spiritual authority.
 
+### Zedek is a domain *and* an application
+
+Zedek is one of the five domains (§4's navigation contract is unchanged) and
+also `apps/zedek`, a standalone research workspace at `zedek.scrinode.com`.
+Both surfaces exist deliberately: the reader's Zedek tab answers a question
+about the passage in front of you, while the application is where extended
+research lives — long conversations, many sources, work that outlasts a
+reading session.
+
+**This costs something, and the cost is recorded rather than discovered.**
+
+- **§11's Scripture Context cannot cross an origin.** A reader at
+  `scrinode.com` selecting ROM.8.28 and opening Zedek at `zedek.scrinode.com`
+  is a navigation between applications, not within one. Context must be passed
+  explicitly — in the URL, as a reference plus translation — and rebuilt on
+  arrival. Never assume shared client state between the two.
+- **Two sessions, not one.** §27.3 forbids a cookie scoped to
+  `.scrinode.com`, so the reader's session does not authenticate Zedek. Zedek
+  runs its own Auth.js instance against the same `users` table.
+- **Shared code goes through packages.** `@scrinode/ui` for primitives,
+  `@scrinode/scripture` for canon and references, `@scrinode/ai` for provider
+  abstraction. Zedek must not import from `apps/web`, and a boundary rule
+  enforces it.
+
+### Studies and Conversations
+
+Zedek organises work in two levels, and the names are fixed (§45):
+
+```text
+Study          a project — a sermon series, a book study, a research question
+└── Conversation   one thread within it
+```
+
+A **Study** is a `workspace` (§3.4) with the type `research`. It is not a new
+primitive: §24 already has `workspaces`, `conversations` and `messages`, and
+§39 says represent relations as rows first. A Conversation belongs to exactly
+one Study.
+
+**Memory is per Study, not per Conversation.** A reader researching Romans
+across six conversations should not have to re-establish what they are working
+on. What persists is the Study's accumulated context — its Scripture range,
+its sources, its saved findings — never a raw transcript replayed into the
+prompt, which would defeat §19's retrieval and cost tokens for no gain.
+
+### Grounding is not optional
+
+Zedek answers from Scrinode's own data — §19's hybrid retrieval over
+`translation_texts` and `retrieval_units`, plus a user's own notes and
+workspace content. It is not a general assistant with Bible data attached
+(§1).
+
+- A claim about the text must trace to retrieved Scripture, and §16's citation
+  validation runs before the response is delivered.
+- Retrieval is scoped to what the user may see: only translations
+  `isAvailable()` permits (§22.1), and only that user's own notes (§33).
+- When retrieval returns nothing relevant, Zedek says so. A model answering
+  from its own weights about Scripture is precisely what §2.2 forbids.
+
 ## 3.4 Work
 
 Ministry and study creation.
@@ -358,15 +416,16 @@ Do not replace a core technology without an explicit architectural reason.
 
 Prefer monorepo organization.
 
-Scrinode has **three applications**.
+Scrinode has **four applications**.
 
 ```text
 scrinode/
 │
 ├── apps/
 │   ├── web/              Next.js — public reader (scrinode.com)
+│   ├── zedek/            Next.js — AI research workspace (zedek.scrinode.com)
 │   ├── backoffice/       Next.js — internal admin (admin.scrinode.com)
-│   └── api/              NestJS  — shared by both frontends
+│   └── api/              NestJS  — shared by every frontend
 │       └── src/
 │           └── admin/    admin-only module, globally guarded
 │
@@ -406,9 +465,9 @@ Every workspace package is scoped **`@scrinode/*`**. No unscoped names, no ad-ho
 
 ```text
 @scrinode/web              @scrinode/types         @scrinode/ui
-@scrinode/backoffice       @scrinode/validation    @scrinode/admin-ui
-@scrinode/api              @scrinode/scripture     @scrinode/ai
-                           @scrinode/config        @scrinode/eslint-config
+@scrinode/zedek            @scrinode/validation    @scrinode/admin-ui
+@scrinode/backoffice       @scrinode/scripture     @scrinode/ai
+@scrinode/api              @scrinode/config        @scrinode/eslint-config
 ```
 
 - The directory name matches the package name after the scope.
@@ -423,7 +482,8 @@ Enforced by ESLint. A violating import fails `pnpm verify` and fails CI.
 
 ```text
 @scrinode/web         ✗ @scrinode/admin-ui, @scrinode/backoffice
-@scrinode/backoffice  ✗ @scrinode/web, @scrinode/scripture
+@scrinode/zedek       ✗ @scrinode/admin-ui, @scrinode/backoffice
+@scrinode/backoffice  ✗ @scrinode/web, @scrinode/zedek, @scrinode/scripture
 @scrinode/api         ✗ frontend apps and their components
 @scrinode/types       ✗ every runtime dependency
 apps/api domain code  ✗ the pg driver — use a repository
@@ -1327,7 +1387,7 @@ Do not force heavy batch work into interactive HTTP requests.
 ## MVP
 
 ```text
-Next.js    → Vercel          (reader and backoffice)
+Next.js    → Vercel          (reader, Zedek and backoffice — three projects)
 NestJS     → Vercel          (serverless functions)
 PostgreSQL → Neon (managed, us-east-2) — pgvector 0.8.6, PostGIS 3.6
 Email      → Resend
@@ -1351,6 +1411,11 @@ true rather than aspirational.
 
 Rules:
 
+- **Three frontend projects, three origins.** `scrinode.com`,
+  `zedek.scrinode.com` and `admin.scrinode.com` are separate Vercel projects.
+  Each holds its own session cookie, host-only, never scoped to the parent
+  domain (§27.3). All three must appear in the API's `CORS_ORIGINS`, and the
+  schema still rejects a wildcard.
 - **One security baseline, two entry points.** `main.ts` (server) and
   `api/index.ts` (Vercel) both build the app through `createApp` in
   `app.factory.ts`, which applies helmet, the CORS allow-list, the 1 MB body

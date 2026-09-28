@@ -282,6 +282,82 @@ importers:
         specifier: ^5.0.1
         version: 5.0.1(@types/node@22.20.3)(jsdom@30.1.0(@noble/hashes@1.8.0))(vite@8.3.0(@types/node@22.20.3)(jiti@2.7.0)(yaml@2.9.1))
 
+  apps/zedek:
+    dependencies:
+      '@reduxjs/toolkit':
+        specifier: ^2.12.0
+        version: 2.12.0(react-redux@9.3.0(@types/react@19.3.0)(react@19.3.0)(redux@5.0.1))(react@19.3.0)
+      '@scrinode/scripture':
+        specifier: workspace:*
+        version: link:../../packages/scripture
+      '@scrinode/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+      '@scrinode/ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
+      '@scrinode/validation':
+        specifier: workspace:*
+        version: link:../../packages/validation
+      next:
+        specifier: ^16.3.5
+        version: 16.3.5(@babel/core@7.29.7)(@playwright/test@1.63.0)(@types/node@22.20.3)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      next-themes:
+        specifier: ^0.4.6
+        version: 0.4.6(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      react:
+        specifier: ^19.3.0
+        version: 19.3.0
+      react-dom:
+        specifier: ^19.3.0
+        version: 19.3.0(react@19.3.0)
+      react-redux:
+        specifier: ^9.3.0
+        version: 9.3.0(@types/react@19.3.0)(react@19.3.0)(redux@5.0.1)
+    devDependencies:
+      '@scrinode/config':
+        specifier: workspace:*
+        version: link:../../packages/config
+      '@scrinode/eslint-config':
+        specifier: workspace:*
+        version: link:../../packages/eslint-config
+      '@tailwindcss/postcss':
+        specifier: ^4.3.3
+        version: 4.3.3
+      '@testing-library/jest-dom':
+        specifier: ^7.0.1
+        version: 7.0.1(@testing-library/dom@10.4.2)(vitest@5.0.1(@types/node@22.20.3)(jsdom@30.1.0(@noble/hashes@1.8.0))(vite@8.3.0(@types/node@22.20.3)(jiti@2.7.0)(yaml@2.9.1)))
+      '@testing-library/react':
+        specifier: ^16.3.3
+        version: 16.3.3(@testing-library/dom@10.4.2)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@types/node':
+        specifier: ^22.10.5
+        version: 22.20.3
+      '@types/react':
+        specifier: ^19.0.7
+        version: 19.3.0
+      '@types/react-dom':
+        specifier: ^19.0.3
+        version: 19.3.0(@types/react@19.3.0)
+      '@vitejs/plugin-react':
+        specifier: ^5.0.0
+        version: 5.2.0(vite@8.3.0(@types/node@22.20.3)(jiti@2.7.0)(yaml@2.9.1))
+      eslint:
+        specifier: ^9.18.0
+        version: 9.39.5(jiti@2.7.0)
+      jsdom:
+        specifier: ^30.1.0
+        version: 30.1.0(@noble/hashes@1.8.0)
+      tailwindcss:
+        specifier: ^4.3.3
+        version: 4.3.3
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+      vitest:
+        specifier: ^5.0.1
+        version: 5.0.1(@types/node@22.20.3)(jsdom@30.1.0(@noble/hashes@1.8.0))(vite@8.3.0(@types/node@22.20.3)(jiti@2.7.0)(yaml@2.9.1))
+
   packages/admin-ui:
     dependencies:
       '@scrinode/types':
